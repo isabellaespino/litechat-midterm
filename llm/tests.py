@@ -62,7 +62,7 @@ class OpenAIClientTests(SimpleTestCase):
                 "reasoning_effort": "none",
             },
         )
-        self.assertEqual(kwargs["timeout"], 60)
+        self.assertEqual(kwargs["timeout"], 120)
 
     def test_success_is_parsed(self, post):
         post.return_value = proxy_response(json_body=ok_body())
