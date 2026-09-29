@@ -146,7 +146,43 @@ log-in) shows:
 - **Credit added:** sign-up credit, top-ups and adjustments, with date, type, note and
   amount.
 
+- **Global System Prompt:** see the next section.
+
 **`/credit/`** (the loop 1–2 credit page) now returns a **301** to `/profile/`.
 
 **Chat pages** show no costs. At $0 or less they show an out-of-credit notice linking to
 My Profile, and disable the composer.
+
+## Global System Prompt
+
+One optional instruction per user, like Litechat's. It's sent as the **system prompt in
+every chat, with every model**. It lives on My Profile (`id="system-prompt"`), even
+though it isn't about money, because My Profile is the user's settings page.
+
+- **Storage:** `accounts.UserSettings.system_prompt` (a `TextField`, at most **4,000
+  characters**). The row is created on first use.
+- **Editing:** a form on My Profile posts to `/profile/system-prompt/`
+  (`accounts.views.system_prompt`, login required, POST only).
+  - Saving → 302 to `/profile/#system-prompt`, with the message "System prompt saved."
+    Saving an empty or whitespace-only value → "System prompt cleared."
+  - More than 4,000 characters → **400**, with the whole My Profile re-rendered through
+    `billing.views.render_profile(status=400, system_prompt_form=form)`, and nothing
+    saved.
+  - GET → 405. Logged out → 302 to log-in.
+- **Sending:** `chat.services.send_message` reads it **at send time**
+  (`system_prompt_for(user)`, which strips it and returns `None` when blank), and passes
+  it to `llm.complete(..., system=…)`.
+  - Each adapter puts it in its provider's field (see
+    [chat → provider contracts](chat.md#provider-contracts)).
+  - With `None`, **no system field or message is sent at all**.
+  - Changing the prompt affects the next message in every chat, including existing ones.
+- **Not stored in history:** the prompt isn't saved on messages, isn't shown in the
+  thread, and isn't resent as part of the conversation. It's added to each request.
+- **Cost:** the provider counts it in each reply's input tokens, so it's charged like
+  any other input. Loop 4's real check showed "Always reply in French." added about 6
+  input tokens per request. The help text on My Profile says it counts toward input
+  tokens.
+- **Isolation:** another user's prompt is never sent, and a test covers this.
+- **Admin:** a read-only "Global System Prompt" inline on each user's admin page, for
+  support.
+

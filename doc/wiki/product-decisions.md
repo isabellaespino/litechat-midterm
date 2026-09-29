@@ -123,6 +123,43 @@ slow reply doesn't block other users.
 - An inline script avoids static-file serving issues when `DEBUG` is off.
 - Whole replies keep the status codes and billing exact.
 
+### 7. Three providers behind one set of rules
+
+**Decision** (loop 4):
+- GPT-5.6 Luna, Claude Haiku and Gemini Flash can all be picked in chat.
+- Each has its own small adapter (`llm/openai.py`, `anthropic.py`, `google.py`) that
+  translates our neutral history and reads its provider's usage fields.
+- All three send through **one shared request function** (`llm/http.py`), so the
+  timeout, the 502/503 mapping and the missing-key 503 are the same by construction.
+- Charging uses each model's own price from the catalog.
+
+**Why.**
+- The product promise is "pick any provider, pay only for what you use". That only holds
+  if a Claude reply is metered as exactly as a GPT reply.
+- Putting the failure handling in one place (with one table-driven test run for every
+  provider) means a fix or change applies to all providers at once. A new provider only
+  has to get its request format and usage fields right.
+- Separate small adapters (about 60 lines each) keep each provider's quirks readable:
+  Anthropic's same-role rule, Google's `model` role and its safety blocks.
+
+### 8. An optional Global System Prompt
+
+**Decision** (loop 4):
+- One instruction per user, set on My Profile and up to 4,000 characters.
+- It's sent as the system prompt in every chat, with every model, **read at send time**.
+- When empty, requests carry no system field at all.
+- It isn't stored on messages.
+
+**Why.**
+- It matches Litechat, and it's the simplest way to give users control over tone or
+  language across every model.
+- One global setting avoids a per-chat settings UI.
+- Reading it at send time means a change applies straight away everywhere.
+- Sending nothing when it's empty keeps requests exactly as before for users who never
+  set one, with no extra tokens.
+- It's billed honestly: the provider counts it as input tokens. The page says so, and the
+  4,000-character cap bounds the cost.
+
 ## Rejected alternatives
 
 | Alternative | Why we rejected it |
@@ -136,6 +173,10 @@ slow reply doesn't block other users.
 | Saving the user's message when the proxy fails | It would leave an unanswered message in the history, which would then be resent on every later turn. We save nothing and keep the draft in the form instead. |
 | Streaming replies | Once a streamed response starts it has already sent 200, so a proxy failure partway through can't become a 502/503. Usage arrives only at the end, so a broken stream leaves tokens used with nothing to charge. Whole replies plus a thinking indicator keep charging exact and every status code correct (redesign study §5). |
 | A frontend framework (React/Vue) or htmx for the chat UI | A framework is forbidden by `CLAUDE.md` and would pull rendering, and the temptation to call LLMs, into the browser. htmx is a new dependency that saves only a few dozen lines. A small inline script plus server-rendered fragments gives the same result with no dependency. |
+| Official provider SDKs (`openai`, `anthropic`, `google-genai`) | Three new dependencies, each needing its base URL overridden, and each possibly sending headers or paths the proxy doesn't support. The request bodies are small, so plain `requests` through one shared function is less code and gives exactly the same error handling for all three (first study §6.5). |
+| Per-chat system prompts | A settings UI on every chat, plus rules for how it interacts with the global prompt. Users asked for one Litechat-style global instruction. Can be added later on top of `UserSettings`. |
+| Storing the system prompt on each message | It would make the prompt part of the resent history, adding repeated tokens and cost. It would also mean a changed prompt doesn't apply to old chats. It's read at send time instead. |
+| Treating a Google safety block as an error (502) | The provider did the work and reported usage, so refusing to charge would give it away, and showing "the model failed" would be misleading. It's stored as a charged reply that shows "The model declined to answer this (safety filter)." |
 | Showing costs on the chat pages | Chat pages should feel like a chatbot, not a meter. Costs moved to My Profile, and the nav keeps the balance visible (redesign §10 #1). |
 
 ## Departures from the plan
@@ -229,3 +270,27 @@ in these places:
    nothing, so these failures also tested the error path for real. The final browser run
    passed 30/30.
 
+### Loop 4
+
+The loop 4 plan (`doc/plan/1790676012-loop4-all-providers.md`) was followed in its six
+commits, with no follow-up fix. The code differs from it in these places:
+
+1. **`LLMReply` and `LLMError` moved to `llm/base.py`.** `llm/__init__.py` now imports
+   the adapters to build `PROVIDERS`, and the adapters import these types. Leaving them
+   in `__init__` would have created a circular import. They're still importable as
+   `from llm import LLMError, LLMReply`.
+2. **The admin inline needed `verbose_name`.** For a one-to-one inline, Django headings
+   use `verbose_name`, not `verbose_name_plural`. A test caught this ("Global System
+   Prompt" was missing), and both are now set.
+3. **The "unsupported model" tests now use a made-up provider (`mistral`)** with no
+   adapter, because all three real providers are enabled. This also exercises the
+   `CHAT_PROVIDERS` filter directly.
+4. **The Google `systemInstruction` shape (the plan's main risk) was confirmed by real
+   calls.** All three models replied in French with "Always reply in French." set, and
+   in English once it was cleared. All 12 real calls succeeded on the first try
+   (1.3–1.8 s), and every charge matched the formula at that model's price.
+5. **The browser check (23/23) used a new driver script, `browser_loop4.mjs`**, which
+   reuses loop 3's DevTools harness. Like the others, it lives in the scratchpad, not the
+   repo. It ran on the dev database with `uitest`, which gained a few Claude, Gemini and
+   GPT chats, about $0.002 of real charges, and an `accounts_usersettings` row. That row
+   is currently empty, because the check cleared the prompt at the end.

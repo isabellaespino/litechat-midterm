@@ -2,7 +2,11 @@
 
 ## Accounts (`accounts/`)
 
-Accounts use Django's built-in `auth.User`. There's no custom user model.
+Accounts use Django's built-in `auth.User`. There's no custom user model. Per-user
+preferences live in **`accounts.UserSettings`**, a one-to-one to the user (related name
+`chat_settings`) created on first use by `accounts.services.get_settings()`. Today it
+holds one preference, the **Global System Prompt**; see
+[billing → Global System Prompt](billing.md#global-system-prompt).
 
 - **Sign-up** (`SignUpView`, `/accounts/signup/`): a `UserCreationForm` with username,
   password and confirmation, plus Django's password validators. When valid, it creates
@@ -50,7 +54,8 @@ enhancement script, and every page works without it.
 | Chat JSON request, logged out | **401** JSON (fetch would silently follow a redirect) |
 | `/chats/` | 302 to the latest chat, or New chat |
 | `/credit/` (moved) | **301** to `/profile/` |
-| GET on the rename endpoint | 405 |
+| GET on the rename endpoint or the system prompt endpoint | 405 |
+| Saving a system prompt over 4,000 characters | **400**, My Profile re-rendered with the error |
 | Another user's chat, unknown chat, unknown URL | 404 |
 | Invalid **Django admin** form | 200. See [Product decisions → Departures from the plan](product-decisions.md#departures-from-the-plan). |
 | Changing or deleting a ledger entry in admin; adding, changing or deleting a conversation in admin | 403 |

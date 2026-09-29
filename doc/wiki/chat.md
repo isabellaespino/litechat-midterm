@@ -8,10 +8,16 @@ The chat pages look and behave like a chatbot:
 
 Replies are **whole**, not streamed (redesign study §5 and §10 #6). Every turn resends
 the full stored history. Each reply is charged its actual cost, but **no costs or token
-counts appear on the chat pages**; they're on [My Profile](billing.md#my-profile). Only
-providers listed in `CHAT_PROVIDERS` (currently `openai`) can be chatted with.
+counts appear on the chat pages**; they're on [My Profile](billing.md#my-profile).
 
-Design sources: `doc/study/1790662970-chatbot-ui-redesign.md` and the loop 3 plan.
+**All three seeded models can chat** (`CHAT_PROVIDERS = ["openai", "anthropic",
+"google"]`): GPT-5.6 Luna, Claude Haiku and Gemini Flash. Each goes through its own
+adapter (see [the `llm` package](#the-llm-package-proxy-clients)). Charging, the 402
+block, the 120 s timeout and error handling are identical for all three, and tested for
+each.
+
+Design sources: `doc/study/1790662970-chatbot-ui-redesign.md`, and the loop 3 and loop 4
+plans.
 
 ## Models (`chat/models.py`)
 
@@ -36,13 +42,14 @@ list query also calls `.order_by("-updated_at", "-id")` explicitly.
 Assistant replies also store:
 - `input_tokens`, `output_tokens`
 - `cost_micros`
-- `stop_reason` (`stop`, or `length` when cut off at 1,024 tokens)
+- `stop_reason`, normalized across providers: `stop`, `length` (cut off at 1,024
+  tokens), `safety` (blocked by Google's filter), or the provider's raw value
 - `usage_estimated`
 - a **price snapshot** (`input_price_micros_per_mtok`, `output_price_micros_per_mtok`),
   so later catalog edits don't rewrite history
 
-`was_cut_off` is true when `stop_reason == "length"`. Messages are ordered
-`created_at, id`.
+`was_cut_off` is true when `stop_reason == "length"`, and `was_blocked` when it's
+`"safety"`. Messages are ordered `created_at, id`.
 
 ## The send flow
 
@@ -50,7 +57,9 @@ Assistant replies also store:
 
 1. Build `messages` from `history_for(conversation)` (every stored message, in order,
    as `{"role", "content"}`) plus the new user message.
-2. Call `llm.complete(llm_model, messages)` **outside any transaction**. It can take up
+2. Read the user's Global System Prompt at send time (`accounts.services.system_prompt_for`,
+   which returns `None` when it's blank). Call `llm.complete(llm_model, messages,
+   system=…)` **outside any transaction**. It can take up
    to 120 seconds, and holding a SQLite write lock that long would block everyone. If it
    raises `LLMError`, the error propagates and **nothing is saved or charged**.
 3. Compute the cost with `billing.services.reply_cost_micros()`. See
@@ -77,7 +86,7 @@ every chat.
 | URL | Behavior |
 |---|---|
 | `/chats/` (`chat_list`) | **302** to the most recently updated chat, or to `/chats/new/` if you have none. The sidebar replaces the old list page. |
-| `/chats/new/` (`chat_new`) | An empty thread ("Start a conversation…") with the **model picker in the message box**. The first send creates the chat. |
+| `/chats/new/` (`chat_new`) | An empty thread ("Start a conversation…") with the **model picker in the message box**: all three models, grouped by provider (Anthropic, Google, OpenAI), with name and tier only. The first send creates the chat. |
 | `/chats/<id>/` (`chat_detail`) | The thread, with a fixed **model label** (a chip) in the message box instead of a picker (redesign §10 #2). Only the owner can open it; anyone else gets 404. |
 | `/chats/<id>/rename/` (`chat_rename`) | POST only (GET → 405). See [Renaming](#renaming). |
 
@@ -88,7 +97,7 @@ Templates (`templates/chat/`), all rendered on the server:
 | `layout.html` | Extends `base.html` with `body.app-page` / `main.chat-app`: a full-height grid of `aside.sidebar` + `section.chat-main`. It includes `_script.html` once. |
 | `_sidebar.html` | + New chat, and the user's chats newest first (titles only). The current chat has `aria-current="page"`. The wrapper has `data-sidebar-list`, which the script replaces. |
 | `_main.html` | The unit the script swaps in after a new chat's first reply. It holds the mobile "Chats" `<details>` (with a second copy of the sidebar), the header (title and rename), the thread and the composer. |
-| `_message.html` | One bubble: `.bubble.user` or `.bubble.assistant` (with a model-name label). Content is autoescaped, with `linebreaksbr`. A cut-off reply adds "Reply was cut short." |
+| `_message.html` | One bubble: `.bubble.user` or `.bubble.assistant` (with a model-name label). Content is autoescaped, with `linebreaksbr`. A cut-off reply adds "Reply was cut short." A safety-blocked empty reply shows "The model declined to answer this (safety filter)." |
 | `_composer.html` | The out-of-credit notice, then `form.composer`, which has a `role="alert"` error area, the picker or model chip, the textarea, Send, and the "Enter to send · Shift+Enter for a new line" hint (shown only when the script is active). |
 | `_out_of_credit.html` | "You're out of credit. Contact an administrator to top up", linking to My Profile. When it shows, the textarea and Send are rendered `disabled`. |
 | `_script.html` | The inline enhancement script. See [The script](#the-script-progressive-enhancement). |
@@ -126,7 +135,7 @@ use `request.accepts("application/json")`: a browser form post sends `*/*`, whic
 | Invalid form (empty, over 8,000 characters, missing or unsupported model) | 400, page with errors | 400 `{"error", "field_errors"}` | no |
 | Existing chat's model inactive or unsupported | 400 | 400 `{"error"}` | no |
 | Balance ≤ $0 | **402**, page with notice | **402** `{"error", "out_of_credit": true, "balance"}` | no |
-| Proxy 429 or 503, timeout, connection error, missing key | 503 | 503 `{"error"}` | yes (except for a missing key) |
+| Proxy 429 or 503, timeout, connection error, missing key (for that provider) | 503 | 503 `{"error"}` | yes (except for a missing key) |
 | Proxy 400/401/403/other 5xx, malformed response | 502 | 502 `{"error"}` | yes |
 | Success, new chat | 302 → `/chats/<id>/#latest` | **200** `{"chat_url", "main_html", "sidebar_html", "balance"}` | yes |
 | Success, existing chat | 302 → `/chats/<id>/#latest` | **200** `{"messages_html", "sidebar_html", "balance"}` | yes |
@@ -191,52 +200,69 @@ without the script:
 It saves with `QuerySet.update()`, so `updated_at` is unchanged and **renaming doesn't
 reorder the sidebar**.
 
-## The `llm` package (proxy client)
+## The `llm` package (proxy clients)
 
 `llm/` is a plain Python package, not a Django app. It's the only code that talks to the
 proxy, and it runs only on the backend.
 
-- `LLMReply(text, input_tokens, output_tokens, stop_reason, usage_estimated=False)`.
-- `LLMError(status, message)`:
-  - `status` is what our view returns (502 or 503).
-  - `message` is safe to show users. It never contains the API key or the proxy's
-    response body.
-- `complete(llm_model, messages)` dispatches on `llm_model.provider`. Only `openai` is
-  implemented. Any other provider raises `LLMError(503, "This model isn't available
-  yet.")`.
+| Module | What it does |
+|---|---|
+| `llm/base.py` | `LLMReply(text, input_tokens, output_tokens, stop_reason, usage_estimated=False)`, and `LLMError(status, message)`. `status` is what our view returns (502 or 503). `message` is safe to show users: it never contains a key or the proxy's response body. Both are re-exported from `llm`. |
+| `llm/http.py` | Shared by every adapter, so failures behave identically for all providers. `post_json()` handles the request, the timeout and the error mapping below, and returns the decoded JSON. `require_key()` raises 503 before any request when a key is empty. It also has `malformed()`, `estimated_usage()` (`ceil(chars / 4)`, logged as a warning), and the two user-facing messages. |
+| `llm/openai.py`, `llm/anthropic.py`, `llm/google.py` | One adapter per provider: `complete(api_model_id, messages, system=None) -> LLMReply`. Each builds its provider's URL, headers and body, then parses the reply. |
+| `llm/__init__.py` | `complete(llm_model, messages, system=None)` dispatches through `PROVIDERS = {"openai": …, "anthropic": …, "google": …}`. An unknown provider raises `LLMError(503, "This model isn't available yet.")`. |
 
-**`llm/openai.py`** sends `POST {LLM_PROXY_BASE_URL}/openai/v1/chat/completions`, with
-`Authorization: Bearer <OPENAI_API_KEY>` and a body of
-`{"model", "messages", "max_tokens": 1024, "reasoning_effort": "none"}`, and a
-`timeout` of `LLM_TIMEOUT_SECONDS` (120). It reads:
-- `choices[0].message.content`
-- `choices[0].finish_reason`
-- `usage.prompt_tokens` / `usage.completion_tokens`
+`messages` is always our neutral history, a list of `{"role": "user" | "assistant",
+"content"}` dicts. Each adapter translates it to its provider's format. `system` is the
+user's [Global System Prompt](billing.md#global-system-prompt), or `None`.
 
-If usage is missing, it estimates `ceil(chars / 4)` for the input and output, sets
-`usage_estimated=True`, and logs a warning.
+### Provider contracts
 
-Error mapping:
+| | OpenAI | Anthropic | Google |
+|---|---|---|---|
+| Endpoint | `POST /openai/v1/chat/completions` | `POST /anthropic/v1/messages` | `POST /google/v1beta/models/{api_model_id}:generateContent` (the id is URL-quoted) |
+| Auth | `Authorization: Bearer <OPENAI_API_KEY>` | `x-api-key: <ANTHROPIC_API_KEY>` + `anthropic-version: 2023-06-01` | `x-goog-api-key: <GOOGLE_API_KEY>` |
+| History | `messages` as is | `messages`. **Consecutive same-role messages are merged** (joined with a blank line), because Anthropic rejects them. Our history always alternates, so this is only a safety net. | `contents: [{role: "user" \| "model", parts: [{text}]}]`. Our `assistant` becomes `model`. |
+| System prompt (only when set) | first message `{"role": "system", "content": s}` | top-level `"system": s` | `"systemInstruction": {"parts": [{"text": s}]}`. The proxy docs don't show this shape; a real call confirmed it in loop 4. |
+| Output cap | `max_tokens: 1024` | `max_tokens: 1024` | `generationConfig.maxOutputTokens: 1024` |
+| Reasoning off | `reasoning_effort: "none"` | `thinking: {"type": "disabled"}` | `generationConfig.thinkingConfig.thinkingBudget: 0` |
+| Reply text | `choices[0].message.content` | the joined `text` of every `content[]` block with `type == "text"` (thinking and tool blocks are ignored) | the joined `candidates[0].content.parts[].text` |
+| Input tokens | `usage.prompt_tokens` | `usage.input_tokens` + any `cache_creation_input_tokens` / `cache_read_input_tokens` (we never enable caching; this guards against undercharging) | `usageMetadata.promptTokenCount` |
+| Output tokens | `usage.completion_tokens` | `usage.output_tokens` | `candidatesTokenCount` (0 if absent) + `thoughtsTokenCount` (0 if absent; billed as output) |
+| Stop → our `stop_reason` | `stop`, `length` | `end_turn`→`stop`, `max_tokens`→`length`, else raw | `STOP`→`stop`, `MAX_TOKENS`→`length`, `SAFETY`→`safety`, else lowercase |
+
+- **Normalized stop reasons:** `Message.was_cut_off` is `stop_reason == "length"`, and
+  `Message.was_blocked` is `stop_reason == "safety"`.
+- **Missing usage** on any provider: tokens are estimated, `usage_estimated=True`, and
+  the reply is still charged.
+- **Google safety blocks:** `SAFETY` with no content is a **valid reply, not an error**.
+  It's stored with empty text and `stop_reason="safety"`, charged its reported usage,
+  and shown as "The model declined to answer this (safety filter)." My Profile marks it
+  "(blocked)". A missing `candidates`, or missing content without `SAFETY`, is malformed
+  → 502.
+
+### Error mapping (identical for every provider, in `llm/http.py`)
 
 | What happened | `LLMError.status` |
 |---|---|
-| `OPENAI_API_KEY` empty | 503 (no request sent) |
-| `requests.Timeout` / `ConnectionError` | 503 |
+| The provider's key is empty | 503, with no request sent. It affects only that provider's model. |
+| `requests.Timeout` (after `LLM_TIMEOUT_SECONDS` = 120) or `ConnectionError` | 503 |
 | HTTP 429 or 503 | 503 |
 | Any other non-2xx | 502 |
-| Invalid JSON, no choices, or content that isn't a string | 502 |
+| Invalid JSON, or a body missing the reply fields | 502 |
 
-Logs record the proxy status code and model id, never the headers, the key or the
-response body.
+Logs record the provider, the proxy status code and the model id. They never record
+headers, keys or bodies.
 
-**Proxy facts** (from https://proxy.litechat.ai/docs, and what we've observed):
+### Proxy facts
+
+From https://proxy.litechat.ai/docs, plus what we've observed:
 - Each provider serves one model.
-- All three providers are DeepSeek Flash underneath.
+- All three are DeepSeek Flash underneath, so replies look alike.
 - The proxy is stateless, which is why we resend the full history.
-- **Its reliability varies a lot.** In loop 3's checks, calls took anywhere from 1.5 s
-  to a dropped connection after 85 s. Most real-proxy runs hit at least one 503. The
-  app's handling (503, draft restored, nothing charged) was exercised for real each
-  time.
+- **Its reliability varies a lot.** Loop 3 saw calls from 1.5 s to a connection dropped
+  after 85 s. In loop 4's run, all 12 real calls answered in 1.3–1.8 s. The app's
+  failure handling (503, draft restored, nothing charged) has been exercised for real.
 
 ## Admin
 

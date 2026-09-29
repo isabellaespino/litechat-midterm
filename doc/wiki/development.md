@@ -31,16 +31,16 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 
 ## Tests
 
-`python manage.py test` runs 100 tests (at loop 3):
+`python manage.py test` runs 139 tests (at loop 4):
 
 | File | Tests | Covers |
 |---|---|---|
 | `config/tests.py` | 5 | the home page; the money helpers (rounding, negatives, conversion) |
-| `accounts/tests.py` | 10 | sign-up, log-in and log-out status codes and behavior, including the 400s |
+| `accounts/tests.py` | 16 | sign-up, log-in and log-out status codes and behavior, including the 400s; the Global System Prompt form (save, strip, clear, 400 over 4,000 characters, 405, anonymous, admin inline) |
 | `catalog/tests.py` | 7 | `/models/` grouping and inactive hiding; dollar↔µ$ in the admin form; the seed command's idempotence |
 | `billing/tests.py` | 22 | sign-up credit for every creation path; the ledger invariant; `str()` in dollars; admin top-ups, adjustments and dollar display; append-only 403s; read-only wallets; **My Profile** (usage by chat and reply, totals, pagination, bounded queries, the `/credit/` 301, the nav "My Profile · $X.XX") |
-| `llm/tests.py` | 10 | the OpenAI request shape (URL, Bearer key, `max_tokens` 1024, `reasoning_effort`, timeout 120); response parsing; estimated usage; error-status mapping; missing key; provider dispatch; the no-network guard |
-| `chat/tests.py` | 46 | cost rounding; titles; `send_message`; every chat status in **form mode and JSON mode** (200/302/400/401/402/404/502/503); JSON `balance` after the charge; history resent; the `/chats/` redirect; sidebar order, ownership and `aria-current`; bubble order; **no costs on chat pages**; picker vs model chip; the out-of-credit composer being disabled; renaming (400/404/405, no reorder); escaping; script included once with the right hooks; no proxy URL or key names in templates; admin dollar display |
+| `llm/tests.py` | 31 | `ProxyErrorMappingTests` runs the **same** checks for every row of `PROVIDER_CASES` (OpenAI, Anthropic, Google): 502/503 mapping, timeouts and connection errors, malformed bodies, a 120 s timeout, and a missing key → 503 with no request. It also covers per-adapter request shape, the system prompt present or absent, parsing, usage and stop mapping, and estimates; Anthropic block joining, cache tokens and same-role merging; Google roles, `systemInstruction`, thinking tokens and safety blocks; dispatch; and the no-network guard. |
+| `chat/tests.py` | 58 | everything from loop 3 (form and JSON modes, the sidebar, bubbles, no costs, renaming, the script hooks), plus `AllProvidersChatTests`: for **each** model, its own price in both modes, history resent in its format, 402 before the proxy, 502/503 with nothing charged, a missing key affecting only that provider, a Google safety block, and the three-model picker. Also `GlobalSystemPromptTests`: the prompt in each provider's format, left out when blank, never another user's, read at send time, and charging and 402 unchanged. |
 
 ### The LLM proxy is never called from tests
 
@@ -49,18 +49,27 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
   attempted in tests…")` for the whole run. Any accidental real call fails the test.
   `llm/tests.py::NoNetworkGuardTests` checks the guard itself.
 - Tests mock at one of two levels:
-  - `mock.patch("llm.openai.requests.post")` returns an OpenAI-shaped response. Used
-    for the client tests and for the view tests, so the whole stack runs.
+  - `mock.patch("llm.http.requests.post")`, the single place every adapter sends from,
+    returns a **provider-shaped** response (`chat.tests.provider_reply(provider, …)`, or
+    the `openai_body`/`anthropic_body`/`google_body` helpers in `llm/tests.py`). Used for
+    the client tests and for the view tests, so the whole stack runs.
   - `mock.patch("llm.complete")` returns an `LLMReply`. Used for the service tests.
-- Use `@override_settings(OPENAI_API_KEY="test-key")` in view tests, so they don't
-  depend on your `.env`.
+- Use `@override_settings(OPENAI_API_KEY=…, ANTHROPIC_API_KEY=…, GOOGLE_API_KEY=…)` in
+  view tests, so they don't depend on your `.env`.
+- **When adding a provider:** add a row to `llm.tests.PROVIDER_CASES` (the shared error
+  tests then cover it), a branch in `chat.tests.provider_reply`, and an entry in
+  `PROVIDER_MODELS`.
 
 ### Real proxy checks
 
 Real calls happen only in a manual verification step, outside the test suite. It uses a
 script run against a **throwaway test database** (`create_test_db` / `destroy_test_db`)
 that follows nav links. Loop 2's check sent two real messages; loop 3's did the same
-through the JSON path and checked each response's `balance` against the wallet. It never
+through the JSON path and checked each response's `balance` against the wallet. Loop 4's
+check made 12 calls: a new chat and a follow-up per model, one per model with the system
+prompt "Always reply in French." (all three replied in French, which confirmed Google's
+`systemInstruction` shape), and one per model after clearing it. Every charge matched the
+formula. It never
 writes to `db.sqlite3`. The proxy is unreliable (see [chat](chat.md)), so expect to
 retry once.
 

@@ -25,9 +25,10 @@ replies, because each reply stores the prices it was charged at.
 ## Which models can chat
 
 A model can be picked in chat only if it's active **and** its provider is in
-`settings.CHAT_PROVIDERS` (currently `["openai"]`). The rule lives in
-`chat.forms.chat_models()`. Enabling Anthropic or Google needs an adapter in `llm/` plus
-adding the provider to that setting.
+`settings.CHAT_PROVIDERS`, currently `["openai", "anthropic", "google"]`, so all three
+seeded models can chat. The rule lives in `chat.forms.chat_models()`. A new provider
+needs an adapter in `llm/` (registered in `llm.PROVIDERS`), a key setting, and an entry
+in `CHAT_PROVIDERS`.
 
 The chat picker (on New chat, in the message box) shows **name and tier only**, e.g.
 "GPT-5.6 Luna · Value". Prices appear on `/models/` and My Profile, never on the chat
@@ -43,8 +44,9 @@ be filtered by provider, tier and active, and searched by name or model id.
 
 Public. It lists active models **grouped by provider** (`{% regroup %}`). Each model shows
 its display name, tier badge, description, and "$in input / $out output per 1M tokens".
-Chat-enabled models have a **Start a chat** link to `/chats/new/`. The others show a
-**Coming soon** badge.
+Chat-enabled models have a **Start a chat** link to `/chats/new/`. With the seeded
+catalog that's every model. A model whose provider isn't in `CHAT_PROVIDERS` would show a
+**Coming soon** badge instead, but none does today.
 
 ## Seed data: `python manage.py seed`
 
