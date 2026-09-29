@@ -2,12 +2,15 @@
 {% load money %}
 {% block title %}Sign up{% endblock %}
 {% block content %}
-  <h1>Sign up</h1>
-  <p class="muted">New accounts start with {{ signup_credit_micros|dollars }} of free credit.</p>
-  <form method="post" class="card">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit" class="btn">Create account</button>
-  </form>
-  <p>Already have an account? <a href="{% url 'login' %}">Log in</a></p>
+  <div class="auth-card">
+    <h1>Welcome to Chat4All</h1>
+    <p class="sub">Create an account and get {{ signup_credit_micros|dollars }} of free credit.</p>
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {% for error in form.non_field_errors %}<p class="form-error" role="alert">{{ error }}</p>{% endfor %}
+      {% for field in form %}{% include "registration/_field.html" %}{% endfor %}
+      <button type="submit" class="btn block">Create account</button>
+    </form>
+    <p class="auth-switch">Already have an account? <a href="{% url 'login' %}">Log in</a></p>
+  </div>
 {% endblock %}

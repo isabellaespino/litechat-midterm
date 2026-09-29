@@ -8,6 +8,10 @@ class SignUpForm(UserCreationForm):
     class Meta(UserCreationForm.Meta):
         fields = ("username",)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["password2"].label = "Confirm password"
+
 
 class SystemPromptForm(forms.Form):
     system_prompt = forms.CharField(

@@ -121,3 +121,58 @@ class SystemPromptTests(TestCase):
         page = self.client.get(reverse("admin:auth_user_change", args=[self.user.pk]))
         self.assertContains(page, "Global System Prompt")
         self.assertContains(page, "Be brief.")
+
+
+class AuthCardTests(TestCase):
+    """Log-in and sign-up are centered cards: welcome heading, labeled fields,
+    one full-width button, and a link to the other page. No social login."""
+
+    def assert_card(self, response, heading, field_ids, button, link_text, link_url, status=200):
+        import re
+
+        self.assertEqual(response.status_code, status)
+        html = response.content.decode()
+        self.assertIn('<div class="auth-card">', html)
+        self.assertIn(f"<h1>{heading}</h1>", html)
+        for field_id in field_ids:
+            self.assertIn(f'<label for="{field_id}">', html)
+            self.assertIn(f'id="{field_id}"', html)
+        buttons = re.findall(r"<button[^>]*>", html.split('<div class="auth-card">')[1])
+        self.assertEqual(buttons, ['<button type="submit" class="btn block">'])
+        self.assertIn(f">{button}</button>", html)
+        self.assertIn(f'<a href="{link_url}">{link_text}</a>', html)
+        self.assertNotIn("google", html.lower())
+        return html
+
+    def test_login_card(self):
+        html = self.assert_card(
+            self.client.get(reverse("login") + "?next=/profile/"),
+            "Welcome back", ["id_username", "id_password"], "Log in", "Sign up", reverse("signup"),
+        )
+        self.assertIn('name="next" value="/profile/"', html)
+        self.assertIn('autocomplete="current-password"', html)
+
+    def test_signup_card(self):
+        html = self.assert_card(
+            self.client.get(reverse("signup")),
+            "Welcome to Chat4All", ["id_username", "id_password1", "id_password2"], "Create account",
+            "Log in", reverse("login"),
+        )
+        self.assertIn("get $2.00 of free credit", html)
+        self.assertIn('<label for="id_password2">Confirm password</label>', html)
+        self.assertIn('autocomplete="new-password"', html)
+
+    def test_errors_render_inside_the_card_with_400(self):
+        html = self.assert_card(
+            self.client.post(reverse("login"), {"username": "nobody", "password": "wrong"}),
+            "Welcome back", ["id_username", "id_password"], "Log in", "Sign up", reverse("signup"), status=400,
+        )
+        card = html.split('<div class="auth-card">')[1]
+        self.assertIn('<p class="form-error" role="alert">', card)
+
+        html = self.assert_card(
+            self.client.post(reverse("signup"), {"username": "alice", "password1": PASSWORD, "password2": "different"}),
+            "Welcome to Chat4All", ["id_username", "id_password1", "id_password2"], "Create account",
+            "Log in", reverse("login"), status=400,
+        )
+        self.assertIn('<p class="field-error" role="alert">', html.split('<div class="auth-card">')[1])
