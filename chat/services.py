@@ -3,6 +3,7 @@ import re
 from django.db import transaction
 
 import llm
+from accounts.services import system_prompt_for
 from billing.models import CreditTransaction
 from billing.services import post_transaction, reply_cost_micros
 
@@ -39,7 +40,8 @@ def send_message(user, llm_model, text, conversation=None):
     goes negative.
     """
     messages = history_for(conversation) + [{"role": "user", "content": text}]
-    reply = llm.complete(llm_model, messages)
+    # The user's Global System Prompt, read at send time (None when not set).
+    reply = llm.complete(llm_model, messages, system=system_prompt_for(user))
 
     cost = reply_cost_micros(
         reply.input_tokens,

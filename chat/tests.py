@@ -874,3 +874,95 @@ class AllProvidersChatTests(TestCase):
         for group in ("Anthropic", "Google", "OpenAI"):
             self.assertIn(f'<optgroup label="{group}">', page)
         self.assertNotContains(self.client.get(reverse("model_list")), "Coming soon")
+
+
+def sent_system_prompt(provider, body):
+    """The system prompt as the provider received it, or None if none was sent."""
+    if provider == "openai":
+        first = body["messages"][0]
+        return first["content"] if first["role"] == "system" else None
+    if provider == "anthropic":
+        return body.get("system")
+    instruction = body.get("systemInstruction")
+    return instruction["parts"][0]["text"] if instruction else None
+
+
+@override_settings(
+    OPENAI_API_KEY="test-openai-key",
+    ANTHROPIC_API_KEY="test-anthropic-key",
+    GOOGLE_API_KEY="test-google-key",
+)
+@mock.patch("llm.http.requests.post")
+class GlobalSystemPromptTests(TestCase):
+    def setUp(self):
+        from django.core.management import call_command
+
+        call_command("seed", stdout=mock.Mock())
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.client.force_login(self.user)
+
+    def set_prompt(self, user, text):
+        from accounts.services import get_settings
+
+        row = get_settings(user)
+        row.system_prompt = text
+        row.save()
+
+    def send(self, post, provider, api_model_id):
+        post.return_value = provider_reply(provider)
+        model = LLMModel.objects.get(api_model_id=api_model_id)
+        response = self.client.post(reverse("chat_new"), {"llm_model": model.pk, "content": "Bonjour"})
+        self.assertEqual(response.status_code, 302)
+        return post.call_args.kwargs["json"]
+
+    def test_prompt_sent_in_each_providers_format(self, post):
+        self.set_prompt(self.user, "Always reply in French.")
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                body = self.send(post, provider, api_model_id)
+                self.assertEqual(sent_system_prompt(provider, body), "Always reply in French.")
+                if provider == "openai":
+                    self.assertEqual(body["messages"][1], {"role": "user", "content": "Bonjour"})
+
+    def test_no_prompt_means_no_system_field(self, post):
+        for prompt in ("", "   \n  "):
+            self.set_prompt(self.user, prompt)
+            for provider, api_model_id, _ in PROVIDER_MODELS:
+                with self.subTest(provider=provider, prompt=repr(prompt)):
+                    body = self.send(post, provider, api_model_id)
+                    self.assertIsNone(sent_system_prompt(provider, body))
+                    self.assertNotIn("system", body)
+                    self.assertNotIn("systemInstruction", body)
+                    if provider == "openai":
+                        self.assertNotIn("system", [m["role"] for m in body["messages"]])
+
+    def test_another_users_prompt_is_never_sent(self, post):
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        self.set_prompt(bob, "Bob's secret instructions")
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                body = self.send(post, provider, api_model_id)
+                self.assertNotIn("Bob's secret", str(body))
+
+    def test_prompt_is_read_at_send_time(self, post):
+        self.set_prompt(self.user, "First instruction")
+        body = self.send(post, "anthropic", "claude-haiku-4-5-20251001")
+        self.assertEqual(body["system"], "First instruction")
+        conversation = Conversation.objects.get()
+        self.set_prompt(self.user, "Changed instruction")
+        post.return_value = provider_reply("anthropic")
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Encore"})
+        self.assertEqual(post.call_args.kwargs["json"]["system"], "Changed instruction")
+        # The prompt isn't part of the stored history or the thread.
+        self.assertNotIn("instruction", "".join(conversation.messages.values_list("content", flat=True)))
+
+    def test_charging_and_402_unchanged(self, post):
+        self.set_prompt(self.user, "Always reply in French.")
+        self.send(post, "google", "gemini-3.8-flash")
+        self.assertEqual(Wallet.objects.get(user=self.user).balance_micros, 2_000_000 - 1_050)
+        post.reset_mock()
+        Wallet.objects.filter(user=self.user).update(balance_micros=0)
+        model = LLMModel.objects.get(api_model_id="gpt-5.6-luna")
+        response = self.client.post(reverse("chat_new"), {"llm_model": model.pk, "content": "Hi"})
+        self.assertEqual(response.status_code, 402)
+        post.assert_not_called()
