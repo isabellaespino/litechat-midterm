@@ -60,6 +60,37 @@
 
   function replaceSidebars(html) {
     $$("[data-sidebar-list]").forEach(function (el) { el.outerHTML = html; });
+    localizeTimes();
+  }
+
+  // relativeLabel:start
+  // A chat's last-activity label in the browser's own time zone, comparing local
+  // calendar days: today -> "14:05", yesterday -> "Yesterday", 2-6 days -> "Mon",
+  // this year -> "Sep 3", older -> "Sep 3, 2025". Future times (clock skew) count as today.
+  function relativeLabel(date, now) {
+    function midnight(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+    var days = Math.round((midnight(now) - midnight(date)) / 86400000); // round: DST-safe
+    if (days <= 0) {
+      return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+    }
+    if (days === 1) return "Yesterday";
+    if (days < 7) return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
+    var options = { month: "short", day: "numeric" };
+    if (date.getFullYear() !== now.getFullYear()) options.year = "numeric";
+    return new Intl.DateTimeFormat("en-US", options).format(date);
+  }
+  // relativeLabel:end
+
+  // Rewrite the server's UTC dates (the no-JS fallback) into relative, local labels.
+  function localizeTimes() {
+    var now = new Date();
+    var full = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
+    $$("time[data-relative]").forEach(function (el) {
+      var date = new Date(el.getAttribute("datetime"));
+      if (isNaN(date)) return;
+      el.textContent = relativeLabel(date, now);
+      el.title = full.format(date);
+    });
   }
 
   function send(form) {
@@ -120,6 +151,7 @@
       if (data.main_html) {
         // First reply of a new chat: swap in the server-rendered chat and update the URL.
         $(".chat-main").innerHTML = data.main_html;
+        localizeTimes(); // the swapped-in main column holds the mobile copy of the sidebar
         history.pushState({}, "", data.chat_url);
         var title = $(".chat-header h1");
         if (title) document.title = title.textContent + " · Litechat";
@@ -158,6 +190,7 @@
   // Back/forward after pushState: reload so the page matches the URL.
   window.addEventListener("popstate", function () { location.reload(); });
 
+  localizeTimes();
   scrollToLatest();
 })();
 </script>

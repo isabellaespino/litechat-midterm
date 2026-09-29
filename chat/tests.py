@@ -1290,3 +1290,77 @@ class DeleteChatTests(TestCase):
         self.assertEqual(CreditTransaction.objects.filter(note="Reply in deleted chat “Backstop”").count(), 1)
         self.assertEqual(self.balance(), balance_before - 1_100)
         self.assertEqual(self.balance(), ledger_sum(self.user))
+
+
+# --- Sidebar dates (loop 5) ---------------------------------------------------------
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class SidebarDateTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def sidebar(self, conversation):
+        page = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        return page.split('<section class="chat-main">')[0]
+
+    def times(self, html):
+        return re.findall(r'<time class="chat-date" datetime="([^"]+)" data-relative title="([^"]+)">([^<]+)</time>', html)
+
+    def test_each_row_has_a_last_activity_time(self, post):
+        from datetime import datetime, timezone
+
+        old = Conversation.objects.create(owner=self.user, llm_model=self.gpt, title="Old")
+        new = Conversation.objects.create(owner=self.user, llm_model=self.gpt, title="New")
+        Conversation.objects.filter(pk=old.pk).update(updated_at=datetime(2025, 9, 3, 23, 30, tzinfo=timezone.utc))
+        Conversation.objects.filter(pk=new.pk).update(updated_at=datetime(2026, 9, 29, 14, 5, tzinfo=timezone.utc))
+
+        rows = self.times(self.sidebar(new))
+        self.assertEqual(
+            rows,
+            [
+                ("2026-09-29T14:05:00+00:00", "Sep 29, 2026 14:05 UTC", "Sep 29, 2026"),
+                ("2025-09-03T23:30:00+00:00", "Sep 3, 2025 23:30 UTC", "Sep 3, 2025"),
+            ],
+        )
+
+    def test_send_bumps_date_and_order_but_rename_does_not(self, post):
+        post.return_value = proxy_ok("hi")
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "First"})
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Second"})
+        first = Conversation.objects.get(title="First")
+        before = first.updated_at
+
+        self.client.post(reverse("chat_rename", args=[first.pk]), {"title": "First renamed"})
+        first.refresh_from_db()
+        self.assertEqual(first.updated_at, before)
+        sidebar = self.sidebar(first)
+        self.assertLess(sidebar.index("Second"), sidebar.index("First renamed"))
+
+        self.client.post(reverse("chat_detail", args=[first.pk]), {"content": "Again"})
+        first.refresh_from_db()
+        self.assertGreater(first.updated_at, before)
+        sidebar = self.sidebar(first)
+        self.assertLess(sidebar.index("First renamed"), sidebar.index("Second"))
+        self.assertIn(f'datetime="{first.updated_at.isoformat()}"', sidebar)
+
+    def test_json_sidebar_has_times(self, post):
+        post.return_value = proxy_ok("hi")
+        data = self.client.post(
+            reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"}, HTTP_ACCEPT="application/json"
+        ).json()
+        self.assertEqual(len(self.times(data["sidebar_html"])), 1)
+        self.assertEqual(len(self.times(data["main_html"])), 1)  # the mobile copy
+
+    def test_script_localizes_after_every_sidebar_update(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        page = self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode()
+        script = page.split("<script data-chat-script>")[1].split("</script>")[0]
+        self.assertIn('$$("time[data-relative]")', script)
+        self.assertIn("function relativeLabel(date, now)", script)
+        replace_sidebars = script.split("function replaceSidebars(html) {")[1].split("// relativeLabel:start")[0]
+        self.assertIn("localizeTimes();", replace_sidebars)
+        after_main_swap = script.split('$(".chat-main").innerHTML = data.main_html;')[1].split("\n")[1]
+        self.assertIn("localizeTimes();", after_main_swap)
