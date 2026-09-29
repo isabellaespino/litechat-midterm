@@ -5,6 +5,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.urls import reverse
 from django.utils.html import format_html
 
+from accounts.admin import UserSettingsInline
 from config.money import dollars_to_micros, format_dollars, format_dollars_precise
 
 from .models import CreditTransaction, Wallet
@@ -144,4 +145,4 @@ admin.site.unregister(User)
 
 @admin.register(User)
 class UserWithWalletAdmin(UserAdmin):
-    inlines = [*UserAdmin.inlines, WalletInline]
+    inlines = [*UserAdmin.inlines, WalletInline, UserSettingsInline]

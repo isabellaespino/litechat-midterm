@@ -5,10 +5,11 @@ prepaid US dollar balance that admins top up in Django admin.
 Users pick a model from OpenAI, Anthropic or Google, and each reply is charged by
 the tokens it uses. Built with Django, SQLite and server-rendered templates.
 
-> **Status: loop 3.** Chat works end to end with the OpenAI model (GPT-5.6 Luna), in a
-> chatbot-style layout, and each reply is charged from its token usage. Usage and costs
-> are shown on **My Profile**. The Anthropic and Google models are listed as "Coming
-> soon".
+> **Status: loop 4.** Chat works end to end with all three models: GPT-5.6 Luna
+> (OpenAI), Claude Haiku (Anthropic) and Gemini Flash (Google). It uses a chatbot-style
+> layout, and each reply is charged from its token usage at that model's price. Usage
+> and costs are shown on **My Profile**, which also holds an optional **Global System
+> Prompt**.
 
 ## Requirements
 
@@ -50,8 +51,12 @@ Then open http://localhost:8000.
 | `DJANGO_SECRET_KEY` | yes | A long random string. Generate one with `python -c "from django.core.management.utils import get_random_secret_key as g; print(g())"` |
 | `DJANGO_DEBUG` | no | `true` for local development. Leave empty (off) in production. |
 | `DJANGO_ALLOWED_HOSTS` | no | Comma-separated host names. Defaults to `localhost,127.0.0.1,0.0.0.0`. |
-| `OPENAI_API_KEY` | yes, to chat | Your OpenAI key for the LLM proxy at https://proxy.litechat.ai. Without it, sending a message shows "unavailable" (503). |
-| `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` | not yet | Keys for the Anthropic and Google models. Unused until those models are enabled. |
+| `OPENAI_API_KEY` | yes, for GPT-5.6 Luna | Your OpenAI key for the LLM proxy at https://proxy.litechat.ai. |
+| `ANTHROPIC_API_KEY` | yes, for Claude Haiku | Your Anthropic key for the same proxy. |
+| `GOOGLE_API_KEY` | yes, for Gemini Flash | Your Google key for the same proxy. |
+
+Each key is only needed for its own model. If one is missing, sending to that model
+shows "unavailable" (503) and charges nothing, and the other models keep working.
 
 `.env` holds secrets and is ignored by git. Never commit it.
 
@@ -62,8 +67,8 @@ Then open http://localhost:8000.
   1M tokens.
 - **Chats** opens your most recent chat (or a new one). The sidebar lists your chats,
   newest first, with a **+ New chat** button.
-  - In a new chat, pick a model next to the message box. An existing chat keeps its
-    model, shown as a label.
+  - In a new chat, pick a model next to the message box: Claude Haiku, Gemini Flash or
+    GPT-5.6 Luna. An existing chat keeps its model, shown as a label.
   - Press **Enter to send**, and **Shift+Enter** for a new line. Your message appears
     right away with a "thinking" indicator, and the whole reply replaces it without
     reloading the page. Replies can take a few seconds (the proxy is allowed up to 120
@@ -79,6 +84,10 @@ Then open http://localhost:8000.
   - your available credit, and totals (credit added, spent, balance)
   - what each chat cost, expandable to the cost and tokens of each reply
   - the credit you've been given (sign-up credit, top-ups)
+  - your **Global System Prompt**: one optional instruction (up to 4,000 characters)
+    that's sent as the system prompt in every chat, with every model. For example,
+    "Always reply in French." Leave it empty for none. It's resent with every message,
+    so it counts toward each reply's input tokens.
 
   Each reply is charged its actual cost. When your balance reaches $0.00 or less,
   sending is blocked until an admin tops you up. The last reply can take the balance

@@ -16,6 +16,17 @@
     </table>
   </div>
 
+  <h2 id="system-prompt">Global System Prompt</h2>
+  <form method="post" action="{% url 'system_prompt' %}" class="card">
+    {% csrf_token %}
+    <p class="muted">Sent as the system prompt in every chat, with every model. Leave it empty for none.
+      It counts toward each reply's input tokens.</p>
+    {% for e in system_prompt_form.system_prompt.errors %}<p class="alert" role="alert">{{ e }}</p>{% endfor %}
+    <label for="id_system_prompt" class="sr-only">Global System Prompt</label>
+    {{ system_prompt_form.system_prompt }}
+    <p><button type="submit" class="btn">Save</button></p>
+  </form>
+
   <h2>Usage by chat</h2>
   {% if page.object_list %}
     {% for c in page %}
@@ -32,7 +43,7 @@
           <tbody>
             {% for r in c.replies %}
               <tr class="reply-row">
-                <td>{{ r.created_at|date:"M j, Y H:i" }}{% if r.usage_estimated %} <span class="muted">(estimated)</span>{% endif %}{% if r.was_cut_off %} <span class="muted">(cut short)</span>{% endif %}</td>
+                <td>{{ r.created_at|date:"M j, Y H:i" }}{% if r.usage_estimated %} <span class="muted">(estimated)</span>{% endif %}{% if r.was_cut_off %} <span class="muted">(cut short)</span>{% endif %}{% if r.was_blocked %} <span class="muted">(blocked)</span>{% endif %}</td>
                 <td class="num">{{ r.input_tokens }}</td>
                 <td class="num">{{ r.output_tokens }}</td>
                 <td class="num">{{ r.cost_micros|dollars_precise }}</td>

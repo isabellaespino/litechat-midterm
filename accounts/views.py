@@ -1,10 +1,17 @@
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth import views as auth_views
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect
+from django.urls import reverse
+from django.views.decorators.http import require_POST
 from django.views.generic import CreateView
 
-from .forms import SignUpForm
+from billing.views import render_profile
+
+from .forms import SignUpForm, SystemPromptForm
+from .services import get_settings
 
 
 class SignUpView(CreateView):
@@ -34,3 +41,20 @@ class LoginView(auth_views.LoginView):
 
     def form_invalid(self, form):
         return self.render_to_response(self.get_context_data(form=form), status=400)
+
+
+@login_required
+@require_POST
+def system_prompt(request):
+    """Save (or clear) the Global System Prompt shown on My Profile."""
+    form = SystemPromptForm(request.POST)
+    if not form.is_valid():
+        return render_profile(request, status=400, system_prompt_form=form)
+    user_settings = get_settings(request.user)
+    user_settings.system_prompt = form.cleaned_data["system_prompt"]
+    user_settings.save()
+    messages.success(
+        request,
+        "System prompt saved." if user_settings.system_prompt else "System prompt cleared.",
+    )
+    return redirect(reverse("profile") + "#system-prompt")

@@ -158,7 +158,7 @@ LLM_PROXY_BASE_URL = "https://proxy.litechat.ai"
 # The proxy's response time varies; a slow reply is better than a failed one.
 LLM_TIMEOUT_SECONDS = 120
 # Providers whose models can be picked in chat.
-CHAT_PROVIDERS = ["openai"]
+CHAT_PROVIDERS = ["openai", "anthropic", "google"]
 CHAT_MESSAGE_MAX_CHARS = 8000
 
 

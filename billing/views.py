@@ -13,6 +13,14 @@ CHATS_PER_PAGE = 20
 
 @login_required
 def profile(request):
+    return render_profile(request)
+
+
+def render_profile(request, status=200, **extra):
+    """My Profile. Also used to re-show the page with a 400 from the system prompt form."""
+    from accounts.forms import SystemPromptForm
+    from accounts.services import get_settings
+
     user = request.user
     ledger = user.credit_transactions.all()
     charge = CreditTransaction.Kind.CHARGE
@@ -51,5 +59,11 @@ def profile(request):
             "total_spent": total_spent,
             "page": page,
             "credit_added": ledger.exclude(kind=charge),
+            "system_prompt_form": extra.pop(
+                "system_prompt_form",
+                SystemPromptForm(initial={"system_prompt": get_settings(user).system_prompt}),
+            ),
+            **extra,
         },
+        status=status,
     )

@@ -49,5 +49,10 @@ class Message(models.Model):
         return f"{self.get_role_display()} message in “{self.conversation}”"
 
     @property
+    def was_blocked(self):
+        """The provider's safety filter declined to answer (Google "SAFETY")."""
+        return self.stop_reason == "safety"
+
+    @property
     def was_cut_off(self):
         return self.stop_reason == "length"
