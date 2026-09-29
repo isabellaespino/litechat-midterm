@@ -3,7 +3,7 @@
 - **Date:** 2026-09-29 (Unix 1790678621)
 - **Type:** study (feasibility and tradeoffs; no code)
 - **Builds on:** loop 4 on `main` (wiki: `chat.md`, `billing.md`, `product-decisions.md`)
-- **Status:** draft for review. Decisions needed in §5.
+- **Status:** decisions recorded (§5). Planned as loop 5.
 
 ## 1. Request
 
@@ -265,19 +265,18 @@ in UTC−7 would see "Today 02:10" for 7:10 pm yesterday.
 
 ---
 
-## 5. Decisions for you
+## 5. Decisions
 
-1. **Markdown dependencies:** markdown-it-py **plus** nh3 (recommended: two layers), or
-   markdown-it-py **only** (one dependency, images disabled)?
-2. **Deleted chats' charges:** keep them in the ledger, with no refund and hard delete of
-   the content (recommended, option A)? This includes the "Deleted chats: $X" summary on
-   My Profile.
-3. **Delete confirmation:** a confirmation page (recommended), with the × in the sidebar
-   and Delete in the chat header linking to it?
-4. **Sidebar date:** last activity (`updated_at`), relative format, localized in the
-   browser with a UTC fallback (all recommended)?
-5. **Out of scope confirmation:** no syntax highlighting, autolinks, images or math in
-   Markdown; no soft delete or undo for deletes.
+Decided on 2026-09-29, before planning loop 5:
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Markdown dependencies | **markdown-it-py plus nh3**: two layers (§2.3). |
+| 2 | Deleted chats' charges | **Keep them in the ledger, with no refund.** The chat and its messages are hard-deleted (option A, §3.2). My Profile gets a **"Deleted chats"** line so its per-chat usage still reconciles with total spend. |
+| 3 | Delete confirmation | A **confirmation page** (§3.1), reached from a × on each sidebar row and a Delete link in the chat header. |
+| 4 | Sidebar date | **Last activity** (`updated_at`), in the **relative format** of §4.2, shown in the **user's time zone** by the existing script. The server renders a UTC fallback (§4.3). |
+| 5 | Out of scope | Confirmed: no syntax highlighting, autolinks, images or math in Markdown; no soft delete and no undo. |
+| 6 | Deleting a chat while a reply is in flight | **Included in loop 5:** the reply's charge is still recorded (with no message, the note naming the deleted chat), nothing else is saved, and the request returns **404** "This chat was deleted." in both form and JSON modes (§3.2). |
 
 ## 6. Suggested plan shape (loop 5), one conventional commit each
 
