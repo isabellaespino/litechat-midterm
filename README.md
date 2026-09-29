@@ -5,11 +5,12 @@ prepaid US dollar balance that admins top up in Django admin.
 Users pick a model from OpenAI, Anthropic or Google, and each reply is charged by
 the tokens it uses. Built with Django, SQLite and server-rendered templates.
 
-> **Status: loop 4.** Chat works end to end with all three models: GPT-5.6 Luna
+> **Status: loop 5.** Chat works end to end with all three models: GPT-5.6 Luna
 > (OpenAI), Claude Haiku (Anthropic) and Gemini Flash (Google). It uses a chatbot-style
 > layout, and each reply is charged from its token usage at that model's price. Usage
 > and costs are shown on **My Profile**, which also holds an optional **Global System
-> Prompt**.
+> Prompt**. Replies render Markdown safely, chats can be deleted, and the sidebar shows
+> each chat's date.
 
 ## Requirements
 
@@ -74,6 +75,16 @@ shows "unavailable" (503) and charges nothing, and the other models keep working
     reloading the page. Replies can take a few seconds (the proxy is allowed up to 120
     seconds).
   - **Rename** a chat from the link next to its title.
+  - **Delete** a chat with the **×** on its sidebar row (or **Delete** next to its
+    title), then confirm. The chat and its messages are gone for good. What its replies
+    cost stays on My Profile under "Deleted chats", and nothing is refunded.
+  - The sidebar shows each chat's **last activity** under its title ("14:05",
+    "Yesterday", "Mon", "Sep 3", …) in your own time zone. Without JavaScript it shows
+    the date in UTC.
+  - Model replies render **Markdown**: bold, lists, code blocks and tables. For safety,
+    raw HTML is shown as text, images are never loaded (they appear as links), and only
+    `http`, `https` and `mailto` links are allowed. Your own messages are shown exactly
+    as typed.
   - Replies are capped at 1,024 output tokens. Your whole conversation is resent with
     each message, so long chats cost more per reply.
   - The chat pages don't show costs. If the model fails to answer, your draft is put
