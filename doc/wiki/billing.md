@@ -235,17 +235,38 @@ every chat**. Only the user adds them; AI-generated memories are out of scope.
   - With only one part set, the result is just that part. With neither, it's `None`, so
     there's no system field.
   - It's read at send time, so a change affects the next message in every chat.
+  - **Each chat has an "Include memories" switch** (loop 8, on by default). When it's
+    off, that chat sends the prompt without the memory block. See [chat → The Include
+    memories switch](chat.md#the-include-memories-switch).
   - It's never stored on messages and **never sent with automatic-title calls**.
   - Another user's memories are never sent, and a test covers this.
   - In loop 7's real check, all three providers followed "Always answer in exactly one
     sentence."
 - **Cost estimate** (not a charge): when a prompt or memories exist, My Profile says
-  "Your system prompt and memories add about N tokens to every message (≈ $X with Claude
-  Haiku, …). Estimate." That's `ceil(len(system_text) / 4)` tokens, priced per active
+  "Your system prompt and memories add about N tokens to every message in chats with
+  memories switched on (≈ $X with Claude Haiku, …). Chats with the switch off send only
+  your system prompt. Estimate." It's an upper bound. That's `ceil(len(system_text) / 4)` tokens, priced per active
   model with `reply_cost_micros(N, 0, …)`. At the caps (10 × 200 characters) the memories
   alone are about 512 tokens, roughly $0.0005 per Claude Haiku message. "Spent" and the
   other totals are unaffected.
 - **Admin:** a read-only "Memories" inline on each user's admin page.
+
+### Switching memories off partway through a chat
+
+**Finding (loop 8's real check): switching memories off partway through a chat doesn't
+fully remove their effect.** The request stops carrying them straight away. The mocked
+tests prove that per provider, and in the real check fresh chats with the switch off used
+about 18 fewer input tokens, the size of the memory block. **But the model tends to imitate its own earlier
+replies in the history.** With the memory "Always answer in exactly one sentence." on
+for the first message and off for the second:
+- GPT-5.6 Luna and Gemini Flash **still answered in one sentence**, copying the style of
+  their earlier one-sentence reply.
+- Claude Haiku answered in three sentences.
+
+In **fresh chats started with the switch off**, all three answered in 4–10 sentences, and
+the Global System Prompt was still followed. So "off" means **not sent**, not
+**forgotten**: earlier replies shaped by a memory stay in the history and can keep
+steering the model. The way to get a clean slate is a new chat with the switch off.
 
 ## Automatic titles never touch the ledger
 

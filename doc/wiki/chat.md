@@ -40,6 +40,8 @@ Design sources: `doc/study/1790662970-chatbot-ui-redesign.md`,
   - `failed`: the title call failed or returned nothing usable; no retry
 - `llm_model` (FK to `catalog.LLMModel`, **PROTECT**, so a model with chats can't be
   deleted; deactivate it instead)
+- `include_memories` (loop 8, default `True`): whether this chat sends the user's
+  [Memories](billing.md#memories). See [The Include memories switch](#the-include-memories-switch).
 - `created_at`, `updated_at`
 
 `Meta.ordering = ["-updated_at", "-id"]`. Aggregated querysets ignore this, so every
@@ -70,9 +72,11 @@ Assistant replies also store:
 
 1. Build `messages` from `history_for(conversation)` (every stored message, in order,
    as `{"role", "content"}`) plus the new user message.
-2. Build the system text at send time with `accounts.services.system_text_for(user)`: the
-   Global System Prompt, then the user's [Memories](billing.md#memories). It's `None`
-   when neither is set. Call `llm.complete(llm_model, messages, system=…)` **outside any
+2. Build the system text at send time with `accounts.services.system_text_for(user,
+   include_memories=…)`: the Global System Prompt, then (if the chat's switch is on) the
+   user's [Memories](billing.md#memories). It's `None` when nothing is left. The switch
+   value for this send comes in as `send_message(…, include_memories=…)` and is saved on
+   the chat in the same transaction as the messages and the charge. Call `llm.complete(llm_model, messages, system=…)` **outside any
    transaction**. It can take up
    to 120 seconds, and holding a SQLite write lock that long would block everyone. If it
    raises `LLMError`, the error propagates and **nothing is saved or charged**.
@@ -129,7 +133,7 @@ Templates (`templates/chat/`), all rendered on the server:
 | `_main.html` | The unit the script swaps in after a new chat's first reply. It holds the mobile "Chats" `<details>` (with a second copy of the sidebar), the header (title, Rename, Delete), any flash messages, the thread and the composer. |
 | `_message.html` | One bubble: `.bubble.user` or `.bubble.assistant` (with a model-name label). **Assistant** content goes through the `markdown` filter into `div.bubble-text.md`. **User** content stays autoescaped with `linebreaksbr`, exactly as typed. A cut-off reply adds "Reply was cut short." A safety-blocked empty reply shows "The model declined to answer this (safety filter)." |
 | `confirm_delete.html` | The delete confirmation page (extends `base.html`). |
-| `_composer.html` | The out-of-credit notice, then `form.composer`, which has a `role="alert"` error area, the picker or model chip, the textarea, Send, and the "Enter to send · Shift+Enter for a new line" hint (shown only when the script is active). |
+| `_composer.html` | The out-of-credit notice, then `form.composer`, which has a `role="alert"` error area, the picker or model chip, the **Include memories switch** (only when the user has a memory), the textarea, Send, and the "Enter to send · Shift+Enter for a new line" hint (shown only when the script is active). |
 | `_out_of_credit.html` | "You're out of credit. Contact an administrator to top up", linking to My Profile. When it shows, the textarea and Send are rendered `disabled`. |
 | `_script.html` | The inline enhancement script. See [The script](#the-script-progressive-enhancement). |
 
@@ -240,6 +244,62 @@ without the script:
 
 It saves with `QuerySet.update()`, so `updated_at` is unchanged and **renaming doesn't
 reorder the sidebar** or change its date.
+
+## The Include memories switch
+
+Loop 8 (plan `doc/plan/1790689108-loop8-include-memories-switch.md`, with no study
+because the decisions were made directly). Users choose **per chat** whether their
+memories are sent.
+
+- **Where:** in the composer row, **next to the message box**: after the model picker or
+  chip, before the textarea.
+- **When it's shown:** **only when the user has at least one memory**
+  (`chat_context` adds `user_memory_count`).
+- **Default:** **on for new chats.** Chats created before loop 8 were migrated to on, so
+  they behave as in loop 7.
+- **A normal form control** that works without JavaScript:
+  - `<input type="checkbox" name="include_memories" value="1" id="id_include_memories"
+    role="switch">` inside a `<label class="memory-switch">`, all **inside
+    `form.composer`**.
+  - The script already builds `new FormData(form)` before disabling the composer, so the
+    fetch path sends it too. **The script needed no changes**, and a test pins that
+    ordering.
+- **Telling "off" from "not shown":** browsers don't submit an unchecked checkbox. A hidden
+  `memories_switch=1` marker is rendered **only when the switch is shown**, and
+  `MessageForm.include_memories_for(conversation)` resolves it:
+  - marker present → the checkbox's value
+  - marker absent → the chat's saved value (or `True` for a new chat), so a send from a
+    page without the switch never changes the setting
+- **Applies from the next message, and is saved with it:** the value applies to the
+  message sent with it and every later one.
+  - It's saved on the chat **when that send succeeds**, in the same transaction.
+  - A failed send (400, 402, 502 or 503) saves nothing. The re-rendered composer shows
+    the **posted** switch state (`switch_checked`) along with the draft, so a resend
+    carries it.
+  - **Flipping the switch without sending isn't saved:** a reload shows the saved
+    setting, which is always exactly what the next send will use.
+- **Off:** the Global System Prompt is still sent, without the memory block. Off with no
+  prompt sends **no system field at all**, for every provider.
+- **Titles:** automatic titles send `system=None` whatever the switch says, so they never
+  carry memories or the prompt.
+- **Charging** is unchanged: every reply is charged from its reported usage (fewer input
+  tokens when memories are off).
+- **Styling:** see [Visual design](design.md#include-memories-switch).
+
+**Finding (loop 8's real check): switching memories off partway through a chat doesn't
+fully remove their effect.** The request stops carrying them straight away. The mocked
+tests prove that per provider, and in the real check fresh chats with the switch off used
+about 18 fewer input tokens, the size of the memory block. **But the model tends to imitate its own earlier
+replies in the history.** With the memory "Always answer in exactly one sentence." on
+for the first message and off for the second:
+- GPT-5.6 Luna and Gemini Flash **still answered in one sentence**, copying the style of
+  their earlier one-sentence reply.
+- Claude Haiku answered in three sentences.
+
+In **fresh chats started with the switch off**, all three answered in 4–10 sentences, and
+the Global System Prompt was still followed. So "off" means **not sent**, not
+**forgotten**: earlier replies shaped by a memory stay in the history and can keep
+steering the model. The way to get a clean slate is a new chat with the switch off.
 
 ## Automatic titles
 

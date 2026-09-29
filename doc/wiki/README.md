@@ -8,7 +8,7 @@ metered, pay-as-you-go access to LLMs from several providers, for people who won
 for a subscription. What counts as "core" is set out in
 [Product decisions](product-decisions.md#what-i-identified-as-core).
 
-**State as of loop 7** (merge `69dbf3c`, 2026-09-29):
+**State as of loop 8** (merge `84384ad`, 2026-09-29):
 - Accounts, the model catalog and the credit ledger work.
 - **Chat works end to end with all three models**: GPT-5.6 Luna (OpenAI), Claude Haiku
   (Anthropic) and Gemini Flash (Google), each through its own adapter. The UI is
@@ -32,7 +32,8 @@ for a subscription. What counts as "core" is set out in
 - New chats get an **automatic title** from their own model after the first reply. It's
   free to users: the cost is recorded for admins only.
 - **Memories:** up to 10 short notes per user, sent with the Global System Prompt in
-  every chat.
+  every chat. Each chat has an **Include memories** switch (on by default, saved per chat,
+  and a normal form control that works without JavaScript).
 
 ## Pages
 
@@ -64,3 +65,4 @@ for a subscription. What counts as "core" is set out in
 - Study (automatic titles, Memories): [`doc/study/1790686669-loop7-auto-titles-memories.md`](../study/1790686669-loop7-auto-titles-memories.md)
   (decisions in §4)
 - Plan (loop 7): [`doc/plan/1790687240-loop7-auto-titles-memories.md`](../plan/1790687240-loop7-auto-titles-memories.md)
+- Plan (loop 8, no study: decided directly): [`doc/plan/1790689108-loop8-include-memories-switch.md`](../plan/1790689108-loop8-include-memories-switch.md)

@@ -71,6 +71,27 @@ properties on `:root`, and page rules only use `var(--…)`.
 - **Memories** (loop 7) are a list of notes with navy **Delete** buttons (`.btn.secondary
   .small`) and a single-line Add form with a gold **Add** button.
 
+### Include memories switch
+
+This is loop 8. The native checkbox is drawn as a switch with `appearance: none`, so it's
+still a real form control, and it uses **existing tokens only**.
+- **On:** a `--navy-700` track with a white (`--on-navy`) knob.
+- **Off:** a **white track with a `--muted` border and knob**. The plan had a pale
+  `--line` track, but that's about 1.3:1 against the page, below WCAG's **3:1 for
+  controls**. `--muted` is 6.5:1.
+- The label is `--text`, 600 weight, with a muted count, e.g. "Include memories (1)".
+- It uses the loop 6 gold focus ring, and has no animation under
+  `prefers-reduced-motion`.
+
+### The composer on phones
+
+At 720px and below, the model chip or picker (and the switch) take the first line(s).
+**The message box and Send always share their own line**
+(`textarea { flex: 1 1 calc(100% - 96px) }`). Loop 8's screenshots showed that adding
+the switch squeezed the message box to a sliver. A first fix (a 200px minimum) then
+pushed Send onto its own line in chats without the switch. The final rule was measured
+at 375px, with and without the switch, and at 1280px.
+
 ## Landing page (`/`)
 
 It's `templates/home.html`, rendered by `config.views.home`. **It's the only page with

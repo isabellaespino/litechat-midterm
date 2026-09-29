@@ -32,7 +32,9 @@ Everything else makes that core easier to use, but isn't the core itself:
 - Markdown rendering
 - the Global System Prompt
 - **Memories:** up to 10 short notes about the user, sent with the Global System Prompt
-  in every chat (loop 7; [billing → Memories](billing.md#memories))
+  in every chat (loop 7; [billing → Memories](billing.md#memories)), with a **per-chat
+  "Include memories" switch** (loop 8;
+  [chat → the switch](chat.md#the-include-memories-switch))
 - **Automatic chat titles:** after the first reply, a short title from the chat's own
   model. It's **free to users**, and the cost is recorded for admins only (loop 7;
   [chat → Automatic titles](chat.md#automatic-titles))
@@ -324,6 +326,43 @@ See [Visual design](design.md).
 - AI-generated memories are out of scope. They'd need consent and review rules for what
   a model writes about a user.
 
+### 15. A per-chat "Include memories" switch
+
+**Decision** (loop 8, made directly by the user, with no study):
+- An **"Include memories" switch next to the message box**, saved **per chat** and **on
+  for new chats**.
+- It can be changed at any time, and applies from the next message.
+- **Off** sends the Global System Prompt without memories.
+- It's a **normal form control** that works without JavaScript, and it **only appears
+  once the user has a memory**.
+- Titles still never include memories.
+- Charging is unchanged.
+
+**Why.**
+- Memories are global, but not every chat should be shaped by them. "I'm a student" helps
+  a homework chat and not a recipe chat. A per-chat switch gives that control without
+  per-chat memory lists.
+- Keeping the prompt when memories are off separates the two: the prompt is a standing
+  instruction, and memories are personal context.
+- Making it part of the message form means no extra endpoint and no JavaScript
+  dependency. What the switch shows is always exactly what the next send uses.
+- Hiding it until a memory exists avoids a control that would do nothing.
+
+**Finding (loop 8's real check): switching memories off partway through a chat doesn't
+fully remove their effect.** The request stops carrying them straight away. The mocked
+tests prove that per provider, and in the real check fresh chats with the switch off used
+about 18 fewer input tokens, the size of the memory block. **But the model tends to imitate its own earlier
+replies in the history.** With the memory "Always answer in exactly one sentence." on
+for the first message and off for the second:
+- GPT-5.6 Luna and Gemini Flash **still answered in one sentence**, copying the style of
+  their earlier one-sentence reply.
+- Claude Haiku answered in three sentences.
+
+In **fresh chats started with the switch off**, all three answered in 4–10 sentences, and
+the Global System Prompt was still followed. So "off" means **not sent**, not
+**forgotten**: earlier replies shaped by a memory stay in the history and can keep
+steering the model. The way to get a clean slate is a new chat with the switch off.
+
 ## Rejected alternatives
 
 | Alternative | Why we rejected it |
@@ -357,6 +396,8 @@ See [Visual design](design.md).
 | Titling with the cheapest model | It sends the user's first message to a provider they didn't choose, to save a fraction of a hundredth of a cent. |
 | Charging users for titles, or folding the cost into the first reply | Titles weren't requested by the user (decision #1). Folding the cost in would make a reply's cost stop matching its reported tokens. The app pays, and admins see the cost. |
 | Retrying failed titles automatically | It hides costs and adds load against an unreliable proxy for a nicety. One attempt, then the first-line title stays, and the user can rename. |
+| Saving the Include memories switch as soon as it's flipped | It needs a separate endpoint, plus a second no-JS button next to the message box, and it can disagree with what the next send uses if a save fails. Saving it with the message it applies to keeps the form control simple and always truthful. |
+| Clearing or rewriting earlier replies when memories are switched off | The history is what the user saw, and it's resent for context. Editing it would change the conversation behind the user's back. A new chat with the switch off is the clean slate. |
 | Unlimited memories, or editing memories in place | Every memory is billed on every message, so there's a cap. Delete and re-add is simpler than an edit flow for one-line notes. |
 | Showing costs on the chat pages | Chat pages should feel like a chatbot, not a meter. Costs moved to My Profile, and the nav keeps the balance visible (redesign §10 #1). |
 
@@ -561,4 +602,33 @@ code differs from the plan in these places:
 6. **Verification:** 9/9 real proxy calls (titles for all three models, each app cost
    matching the formula, the user's balance and ledger unchanged; memories followed by
    all three), and the browser check passed 16/16, plus 4/4 for the layout fix.
+
+### Loop 8
+
+The loop 8 plan (`doc/plan/1790689108-loop8-include-memories-switch.md`, with no study)
+was followed in its three commits, plus one follow-up fix. The code differs from it in
+these places:
+
+1. **The switch's off state has a visible border.** The plan styled the off track with
+   `--line`, but that's about 1.3:1 against the page, below WCAG's 3:1 for controls. Off
+   is now a white track with a `--muted` border and knob (6.5:1), and on is `--navy-700`
+   with a white knob. No new tokens, so `ContrastTests` is unchanged.
+2. **The phone composer was fixed** (`fix: keep the message box and Send on their own line
+   on phones`).
+   - The screenshots showed the model chip plus the switch squeezing the message box to a
+     sliver ("Me / ssa").
+   - A first attempt (a 200px minimum) pushed Send onto its own line in chats without the
+     switch.
+   - The final rule gives the message box and Send their own line on phones. It was
+     measured at 375px with and without the switch, and at 1280px.
+3. **An extra real-proxy check.** The plan's check (on, then off in the same chat) gave an
+   ambiguous result: two models stayed at one sentence with the switch off. A second run
+   started **fresh chats with the switch off**, which answered in 4–10 sentences with
+   about 18 fewer input tokens, while still following the prompt. That separates "not
+   sent" (proven) from "no longer influential" (not guaranteed; see the finding under
+   decision 15).
+4. **Verification:** 216 tests, 9/9 real calls, and a browser check (20/20) including
+   **no-JavaScript** toggling and the keyboard. It also confirmed that loop 7's automatic
+   title still worked alongside the switch ("How Rainbows Form"). `uitest` was left with
+   no memories.
 

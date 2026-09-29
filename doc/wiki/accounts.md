@@ -8,8 +8,10 @@ preferences live in **`accounts.UserSettings`**, a one-to-one to the user (relat
 holds one preference, the **Global System Prompt**; see
 [billing → Global System Prompt](billing.md#global-system-prompt). **`accounts.Memory`**
 holds the user's notes (up to 10 × 200 characters); see
-[billing → Memories](billing.md#memories). `accounts.services.system_text_for(user)`
-combines the two into the system text sent with every message.
+[billing → Memories](billing.md#memories). `accounts.services.system_text_for(user,
+include_memories=True)` combines the two into the system text sent with every message.
+With `include_memories=False` (a chat whose Include memories switch is off), it's the
+prompt alone.
 
 - **Log-in and sign-up pages** are centered cards ("Welcome back" / "Welcome to
   Chat4All"), with labeled fields, one full-width button, a link to the other page, and

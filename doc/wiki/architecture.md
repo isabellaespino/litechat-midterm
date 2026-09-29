@@ -21,14 +21,15 @@ config/        project package: settings, root URLs (and the Chat4All admin head
   tests.py       landing, estimates, brand (no "Litechat"), contrast, and money tests
 accounts/      sign-up form and view; log-in view that returns 400 on bad credentials;
                UserSettings (the Global System Prompt) and Memory, their views,
-               services.system_text_for (prompt + memories), and admin inlines
+               services.system_text_for (prompt + memories, or the prompt alone when a
+               chat's Include memories switch is off), and admin inlines
 catalog/       LLMModel, its admin, the /models/ page, the `seed` command,
                estimates.py (messages-per-budget estimates for the landing page),
                and the `money` template filters (templatetags/money.py)
 billing/       Wallet, CreditTransaction, services.py (the only balance writer, plus
                reply_cost_micros), the sign-up credit signal, the nav context
                processor, the My Profile page (/profile/), admin
-chat/          Conversation (with title_source), Message, TitleGeneration (admin-only
+chat/          Conversation (with title_source and include_memories), Message, TitleGeneration (admin-only
                app-cost log), titles.py (automatic titles), services.py (send_message,
                ConversationDeleted),
                markdown.py (render_markdown: markdown-it-py + nh3), templatetags/
