@@ -1,3 +1,5 @@
+from unittest import mock
+
 from django.contrib.auth.models import User
 from django.db.models import Sum
 from django.test import TestCase
@@ -129,25 +131,124 @@ class AdminTopUpTests(TestCase):
         self.assertContains(response, "$2.00")
 
 
-class CreditPageTests(TestCase):
+def charge_reply(user, model, text, conversation=None, input_tokens=1000, output_tokens=300):
+    """Send a message through the real service with a mocked model reply."""
+    from chat.services import send_message
+    from llm import LLMReply
+
+    reply = LLMReply(f"Reply to {text}", input_tokens, output_tokens, "stop")
+    with mock.patch("llm.complete", return_value=reply):
+        return send_message(user, model, text, conversation)
+
+
+def make_gpt():
+    from catalog.models import LLMModel
+
+    return LLMModel.objects.create(
+        provider="openai",
+        api_model_id="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
+        tier="value",
+        input_price_micros_per_mtok=500_000,
+        output_price_micros_per_mtok=2_000_000,
+    )
+
+
+class ProfilePageTests(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.alice)
+
     def test_anonymous_is_redirected_to_login(self):
-        response = self.client.get(reverse("credit"))
-        self.assertRedirects(response, f"{reverse('login')}?next={reverse('credit')}")
+        self.client.logout()
+        response = self.client.get(reverse("profile"))
+        self.assertRedirects(response, f"{reverse('login')}?next={reverse('profile')}")
 
-    def test_shows_balance_and_only_own_transactions(self):
-        alice = User.objects.create_user("alice", password=PASSWORD)
-        bob = User.objects.create_user("bob", password=PASSWORD)
-        post_transaction(bob, 1_000_000, CreditTransaction.Kind.TOPUP, note="Bob's top-up")
-        self.client.force_login(alice)
-
-        response = self.client.get(reverse("credit"))
-
+    def test_new_user(self):
+        response = self.client.get(reverse("profile"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Available credit: $2.00")
+        self.assertContains(response, '<div class="balance">$2.00</div>', html=True)
         self.assertContains(response, "Sign-up credit")
-        self.assertNotContains(response, "Bob&#x27;s top-up")
+        self.assertContains(response, "No chats yet")
 
-    def test_nav_shows_available_credit(self):
-        self.client.force_login(User.objects.create_user("alice", password=PASSWORD))
+    def test_usage_by_chat_and_reply(self):
+        first = charge_reply(self.alice, self.gpt, "Older chat")
+        charge_reply(self.alice, self.gpt, "Follow-up", first, input_tokens=2000, output_tokens=100)
+        charge_reply(self.alice, self.gpt, "Newer chat")
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        charge_reply(bob, self.gpt, "Bob chat")
+        post_transaction(bob, 1_000_000, CreditTransaction.Kind.TOPUP, note="Bob's top-up")
+
+        response = self.client.get(reverse("profile"))
+        content = response.content.decode()
+
+        self.assertLess(content.index("Newer chat"), content.index("Older chat"))
+        self.assertNotIn("Bob chat", content)
+        self.assertNotIn("Bob&#x27;s top-up", content)
+        # Older chat: 1,100 µ$ + (2000×0.5 + 100×2) = 1,200 µ$ → $0.0023 over 2 replies.
+        self.assertContains(response, "2 replies")
+        self.assertContains(response, "3000 in / 400 out tokens")
+        self.assertContains(response, "$0.0023")
+        self.assertContains(response, "$0.0012")  # the follow-up reply
+        self.assertEqual(content.count('class="reply-row"'), 3)
+
+    def test_totals_match_ledger(self):
+        charge_reply(self.alice, self.gpt, "Hi")
+        post_transaction(self.alice, 5_000_000, CreditTransaction.Kind.TOPUP, note="Thanks")
+        response = self.client.get(reverse("profile"))
+
+        self.assertEqual(response.context["total_added"], 7_000_000)
+        self.assertEqual(response.context["total_spent"], 1_100)
+        wallet = Wallet.objects.get(user=self.alice)
+        self.assertEqual(wallet.balance_micros, 7_000_000 - 1_100)
+        ledger_sum = CreditTransaction.objects.filter(user=self.alice).aggregate(t=Sum("amount_micros"))["t"]
+        self.assertEqual(wallet.balance_micros, ledger_sum)
+        added = [t.kind for t in response.context["credit_added"]]
+        self.assertEqual(sorted(added), ["signup", "topup"])
+        self.assertContains(response, "Thanks")
+
+    def test_pagination(self):
+        from chat.models import Conversation
+
+        for i in range(21):
+            Conversation.objects.create(owner=self.alice, llm_model=self.gpt, title=f"Chat {i}")
+        page1 = self.client.get(reverse("profile"))
+        self.assertEqual(len(page1.context["page"].object_list), 20)
+        self.assertContains(page1, "Older chats")
+        page2 = self.client.get(reverse("profile") + "?page=2")
+        self.assertEqual(len(page2.context["page"].object_list), 1)
+        self.assertEqual(self.client.get(reverse("profile") + "?page=abc").status_code, 200)
+
+    def test_query_count_does_not_grow_with_chats(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def count_queries():
+            with CaptureQueriesContext(connection) as ctx:
+                self.client.get(reverse("profile"))
+            return len(ctx.captured_queries)
+
+        charge_reply(self.alice, self.gpt, "One")
+        few = count_queries()
+        for i in range(5):
+            charge_reply(self.alice, self.gpt, f"More {i}")
+        self.assertEqual(count_queries(), few)
+
+    def test_old_credit_url_redirects_permanently(self):
+        response = self.client.get("/credit/")
+        self.assertEqual(response.status_code, 301)
+        self.assertEqual(response.url, reverse("profile"))
+
+    def test_nav_shows_profile_with_balance(self):
         response = self.client.get(reverse("home"))
-        self.assertContains(response, "Available credit: $2.00")
+        self.assertContains(
+            response,
+            f'<a class="credit" href="{reverse("profile")}">My Profile · <span data-nav-balance>$2.00</span></a>',
+            html=True,
+        )
+        for micros, shown in [(1, "$0.00"), (-1, "-$0.01")]:
+            with self.subTest(micros=micros):
+                Wallet.objects.filter(user=self.alice).update(balance_micros=micros)
+                response = self.client.get(reverse("home"))
+                self.assertContains(response, f"<span data-nav-balance>{shown}</span>", html=True)

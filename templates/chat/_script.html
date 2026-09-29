@@ -1,0 +1,163 @@
+<script data-chat-script>
+/* Progressive enhancement for the chat pages (no framework, no dependencies).
+   Without this script every form still works with a normal POST and page reload.
+   The server renders all message HTML; model output is never turned into HTML here. */
+(function () {
+  "use strict";
+  document.documentElement.classList.add("js");
+
+  var GENERIC_ERROR = "Something went wrong. Please try again.";
+
+  function $(selector, root) { return (root || document).querySelector(selector); }
+  function $$(selector) { return Array.prototype.slice.call(document.querySelectorAll(selector)); }
+
+  function scrollToLatest() {
+    var inner = $(".thread-inner");
+    if (inner && inner.lastElementChild) inner.lastElementChild.scrollIntoView({ block: "end" });
+  }
+
+  function userBubble(text) {
+    var bubble = document.createElement("div");
+    bubble.className = "bubble user pending";
+    var body = document.createElement("div");
+    body.className = "bubble-text";
+    body.textContent = text; // the user's own text, never parsed as HTML
+    bubble.appendChild(body);
+    return bubble;
+  }
+
+  function thinkingBubble() {
+    var bubble = document.createElement("div");
+    bubble.className = "bubble assistant thinking pending";
+    bubble.innerHTML = '<span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>' +
+      '<span class="sr-only">Thinking…</span>'; // static markup only
+    return bubble;
+  }
+
+  function setBusy(form, busy) {
+    form.querySelector("textarea").disabled = busy;
+    form.querySelector("button[type=submit]").disabled = busy;
+    var thread = $(".thread");
+    if (thread) thread.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  function showError(form, message, link) {
+    var alert = form.querySelector(".alert");
+    alert.textContent = message + " ";
+    if (link) {
+      var a = document.createElement("a");
+      a.href = link.href;
+      a.textContent = link.text;
+      alert.appendChild(a);
+    }
+  }
+
+  function updateBalance(balance) {
+    // Decision #1: the nav's "My Profile · $X.XX" stays current after every reply.
+    if (typeof balance !== "string") return;
+    $$("[data-nav-balance]").forEach(function (el) { el.textContent = balance; });
+  }
+
+  function replaceSidebars(html) {
+    $$("[data-sidebar-list]").forEach(function (el) { el.outerHTML = html; });
+  }
+
+  function send(form) {
+    var textarea = form.querySelector("textarea");
+    var draft = textarea.value;
+    if (!draft.trim() || form.dataset.busy) return;
+
+    var body = new FormData(form); // before disabling: disabled fields aren't submitted
+    var inner = $(".thread-inner");
+    var empty = $(".empty", inner);
+    if (empty) empty.remove();
+    inner.appendChild(userBubble(draft));
+    inner.appendChild(thinkingBubble());
+    form.querySelector(".alert").textContent = "";
+    textarea.value = "";
+    form.dataset.busy = "1";
+    setBusy(form, true);
+    scrollToLatest();
+
+    function finish() {
+      $$(".bubble.pending").forEach(function (el) { el.remove(); });
+      delete form.dataset.busy;
+    }
+
+    function fail(status, data) {
+      finish();
+      if (empty && !inner.children.length) inner.appendChild(empty);
+      textarea.value = draft; // restore the draft so nothing is lost
+      var message = (data && data.error) || GENERIC_ERROR;
+      if (status === 402) {
+        updateBalance(data && data.balance);
+        showError(form, message, { href: form.dataset.profileUrl, text: "View your profile" });
+        return; // stay disabled: sending is blocked until a top-up
+      }
+      setBusy(form, false);
+      if (status === 401) {
+        showError(form, message, { href: data.login_url, text: "Log in" });
+      } else {
+        showError(form, message);
+      }
+      textarea.focus();
+    }
+
+    fetch(form.action, {
+      method: "POST",
+      body: body,
+      headers: { "Accept": "application/json" },
+      credentials: "same-origin"
+    }).then(function (response) {
+      return response.json().then(
+        function (data) { return { status: response.status, ok: response.ok, data: data }; },
+        function () { return { status: response.status, ok: false, data: null }; }
+      );
+    }).then(function (result) {
+      if (!result.ok || !result.data) return fail(result.status, result.data);
+      var data = result.data;
+      finish();
+      if (data.main_html) {
+        // First reply of a new chat: swap in the server-rendered chat and update the URL.
+        $(".chat-main").innerHTML = data.main_html;
+        history.pushState({}, "", data.chat_url);
+        var title = $(".chat-header h1");
+        if (title) document.title = title.textContent + " · Litechat";
+      } else {
+        inner.insertAdjacentHTML("beforeend", data.messages_html);
+        setBusy(form, false);
+      }
+      replaceSidebars(data.sidebar_html);
+      updateBalance(data.balance);
+      scrollToLatest();
+      var box = $(".composer textarea");
+      if (box && !box.disabled) box.focus();
+    }).catch(function () { fail(0, null); });
+  }
+
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form.classList || !form.classList.contains("composer")) return;
+    event.preventDefault();
+    send(form);
+  });
+
+  // Enter sends; Shift+Enter adds a new line. Ignore Enter while an input method
+  // editor is composing (Chinese, Japanese, ...), where Enter confirms the text.
+  document.addEventListener("keydown", function (event) {
+    var target = event.target;
+    if (event.key !== "Enter" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.isComposing || event.keyCode === 229) return;
+    if (!target.matches || !target.matches(".composer textarea")) return;
+    event.preventDefault();
+    var form = target.form;
+    if (form.requestSubmit) form.requestSubmit();
+    else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+
+  // Back/forward after pushState: reload so the page matches the URL.
+  window.addEventListener("popstate", function () { location.reload(); });
+
+  scrollToLatest();
+})();
+</script>

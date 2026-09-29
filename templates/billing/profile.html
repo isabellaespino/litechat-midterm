@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}My Profile{% endblock %}
+{% block content %}
+  <h1>My Profile</h1>
+  <p class="muted">{{ user.username }} · member since {{ user.date_joined|date:"M j, Y" }}</p>
+
+  <div class="card">
+    <div class="muted">Available credit</div>
+    <div class="balance">{{ wallet.balance_micros|dollars }}</div>
+    <p class="muted">Contact an administrator to add credit.</p>
+    <table class="totals">
+      <tr><td>Credit added</td><td class="num">{{ total_added|dollars_precise }}</td></tr>
+      <tr><td>Spent on replies</td><td class="num">{{ total_spent|dollars_precise }}</td></tr>
+      <tr><td><strong>Balance</strong></td><td class="num"><strong>{{ wallet.balance_micros|dollars_precise }}</strong></td></tr>
+    </table>
+  </div>
+
+  <h2>Usage by chat</h2>
+  {% if page.object_list %}
+    {% for c in page %}
+      <details class="card usage-chat">
+        <summary>
+          <a href="{% url 'chat_detail' c.pk %}">{{ c.title }}</a>
+          <strong class="chat-cost">{{ c.total_cost|default:0|dollars_precise }}</strong>
+          <div class="muted">{{ c.llm_model.display_name }} · {{ c.reply_count }} repl{{ c.reply_count|pluralize:"y,ies" }}
+            · {{ c.input_tokens_total|default:0 }} in / {{ c.output_tokens_total|default:0 }} out tokens
+            · last used {{ c.updated_at|date:"M j, Y H:i" }}</div>
+        </summary>
+        <table>
+          <thead><tr><th>Reply</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Cost</th></tr></thead>
+          <tbody>
+            {% for r in c.replies %}
+              <tr class="reply-row">
+                <td>{{ r.created_at|date:"M j, Y H:i" }}{% if r.usage_estimated %} <span class="muted">(estimated)</span>{% endif %}{% if r.was_cut_off %} <span class="muted">(cut short)</span>{% endif %}</td>
+                <td class="num">{{ r.input_tokens }}</td>
+                <td class="num">{{ r.output_tokens }}</td>
+                <td class="num">{{ r.cost_micros|dollars_precise }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="muted">No replies yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    {% endfor %}
+    {% if page.has_other_pages %}
+      <p>
+        {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}">← Newer chats</a>{% endif %}
+        <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+        {% if page.has_next %}<a href="?page={{ page.next_page_number }}">Older chats →</a>{% endif %}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="muted">No chats yet. <a href="{% url 'chat_new' %}">Start a chat</a>.</p>
+  {% endif %}
+
+  <h2>Credit added</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      {% for txn in credit_added %}
+        <tr>
+          <td>{{ txn.created_at|date:"M j, Y H:i" }}</td>
+          <td>{{ txn.get_kind_display }}</td>
+          <td>{{ txn.note }}</td>
+          <td class="num">{{ txn.amount_micros|dollars_precise }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

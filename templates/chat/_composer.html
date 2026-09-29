@@ -1,0 +1,15 @@
+{% include "chat/_out_of_credit.html" %}
+<form method="post" class="composer" action="{% if conversation %}{% url 'chat_detail' conversation.pk %}{% else %}{% url 'chat_new' %}{% endif %}" data-profile-url="{% url 'profile' %}">
+  {% csrf_token %}
+  <div class="alert" role="alert">{% if error %}{{ error }}{% endif %}{% for field in form %}{% for e in field.errors %}{{ e }} {% endfor %}{% endfor %}</div>
+  <div class="composer-row">
+    {% if conversation %}
+      <span class="model-chip" title="Model for this chat">{{ conversation.llm_model.display_name }}</span>
+    {% else %}
+      {{ form.llm_model }}
+    {% endif %}
+    <textarea name="content" rows="2" maxlength="{{ max_chars }}" aria-label="Message" placeholder="Message…" required{% if out_of_credit %} disabled{% endif %}>{{ form.content.value|default_if_none:"" }}</textarea>
+    <button type="submit" class="btn"{% if out_of_credit %} disabled{% endif %}>Send</button>
+  </div>
+  <p class="hint">Enter to send · Shift+Enter for a new line</p>
+</form>

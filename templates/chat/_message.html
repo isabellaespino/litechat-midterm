@@ -1,0 +1,5 @@
+<div class="bubble {{ message.role }}"{% if is_latest %} id="latest"{% endif %}>
+  {% if message.role == "assistant" %}<div class="bubble-label">{{ conversation.llm_model.display_name }}</div>{% endif %}
+  <div class="bubble-text">{{ message.content|linebreaksbr }}</div>
+  {% if message.was_cut_off %}<div class="bubble-note">Reply was cut short.</div>{% endif %}
+</div>
