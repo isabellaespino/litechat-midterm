@@ -26,6 +26,11 @@ def render_profile(request, status=200, **extra):
     charge = CreditTransaction.Kind.CHARGE
     total_added = ledger.exclude(kind=charge).aggregate(t=Sum("amount_micros"))["t"] or 0
     total_spent = -(ledger.filter(kind=charge).aggregate(t=Sum("amount_micros"))["t"] or 0)
+    # Charges whose chat was deleted: the ledger keeps them (no refund), so show them
+    # as one line to keep per-chat usage reconciled with total spend.
+    deleted = ledger.filter(kind=charge, message__isnull=True).aggregate(
+        total=Sum("amount_micros"), count=Count("id")
+    )
 
     conversations = (
         Conversation.objects.filter(owner=user)
@@ -59,6 +64,8 @@ def render_profile(request, status=200, **extra):
             "total_spent": total_spent,
             "page": page,
             "credit_added": ledger.exclude(kind=charge),
+            "deleted_replies": deleted["count"],
+            "deleted_spent": -(deleted["total"] or 0),
             "system_prompt_form": extra.pop(
                 "system_prompt_form",
                 SystemPromptForm(initial={"system_prompt": get_settings(user).system_prompt}),

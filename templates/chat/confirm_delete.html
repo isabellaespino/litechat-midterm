@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Delete chat{% endblock %}
+{% block content %}
+  <h1>Delete “{{ conversation.title }}”?</h1>
+  <div class="card">
+    <p>This deletes the chat and its messages. It can't be undone.</p>
+    <p class="muted">Charges for its replies stay in your usage history on
+      <a href="{% url 'profile' %}">My Profile</a>. Deleting a chat doesn't refund them.</p>
+    <form method="post" action="{% url 'chat_delete' conversation.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn danger">Delete chat</button>
+      <a href="{% url 'chat_detail' conversation.pk %}">Cancel</a>
+    </form>
+  </div>
+{% endblock %}
