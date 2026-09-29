@@ -1,7 +1,9 @@
-<div class="bubble {{ message.role }}"{% if is_latest %} id="latest"{% endif %}>
+{% load chat_markdown %}<div class="bubble {{ message.role }}"{% if is_latest %} id="latest"{% endif %}>
   {% if message.role == "assistant" %}<div class="bubble-label">{{ conversation.llm_model.display_name }}</div>{% endif %}
   {% if message.was_blocked and not message.content %}
     <div class="bubble-note">The model declined to answer this (safety filter).</div>
+  {% elif message.role == "assistant" %}
+    <div class="bubble-text md">{{ message.content|markdown }}</div>
   {% else %}
     <div class="bubble-text">{{ message.content|linebreaksbr }}</div>
   {% endif %}
