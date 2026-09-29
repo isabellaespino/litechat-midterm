@@ -31,8 +31,10 @@ Every page is reachable from the nav bar or from a link on another page:
 
 Other links:
 - **Home page:** Start a chat (logged in) or Sign up (logged out), plus Browse models.
-- **Chat sidebar:** **+ New chat** and every chat. On phones it's behind a "Chats"
-  toggle.
+- **Chat sidebar:** **+ New chat** and every chat (with its date and a × to delete it).
+  On phones it's behind a "Chats" toggle.
+- **Chat header:** Rename and Delete. **Delete confirmation page:** Cancel returns to the
+  chat, and the page links to My Profile.
 - **My Profile:** links to each chat and to New chat.
 - **`/models/`:** Start a chat on chat-enabled models.
 - **Sign-up and log-in pages:** link to each other.
@@ -54,7 +56,9 @@ enhancement script, and every page works without it.
 | Chat JSON request, logged out | **401** JSON (fetch would silently follow a redirect) |
 | `/chats/` | 302 to the latest chat, or New chat |
 | `/credit/` (moved) | **301** to `/profile/` |
-| GET on the rename endpoint or the system prompt endpoint | 405 |
+| GET on the rename endpoint or the system prompt endpoint; PUT/PATCH/DELETE on the chat delete page | 405 |
+| Chat delete confirmation page | 200. The delete POST → 302 to `/chats/`. |
+| Sending to a chat that was deleted while its reply was in flight | **404** (the reply is still charged) |
 | Saving a system prompt over 4,000 characters | **400**, My Profile re-rendered with the error |
 | Another user's chat, unknown chat, unknown URL | 404 |
 | Invalid **Django admin** form | 200. See [Product decisions → Departures from the plan](product-decisions.md#departures-from-the-plan). |

@@ -6,7 +6,8 @@ Django 5.2 LTS, SQLite, Django's built-in auth and admin, and server-rendered te
 There's no frontend framework. The chat pages have one small inline script that
 progressively enhances their forms (see [chat](chat.md#the-script-progressive-enhancement)),
 and everything works without it. The dependencies are `Django`,
-`python-dotenv` and `requests` (see `requirements.txt`). The reasons behind the stack
+`python-dotenv`, `requests`, `markdown-it-py` (with `mdurl`) and `nh3` (see
+`requirements.txt`). The reasons behind the stack
 are in the study, §3, and the reasons for each dependency in §7.
 
 ## Layout
@@ -24,8 +25,10 @@ catalog/       LLMModel, its admin, the /models/ page, the `seed` command,
 billing/       Wallet, CreditTransaction, services.py (the only balance writer, plus
                reply_cost_micros), the sign-up credit signal, the nav context
                processor, the My Profile page (/profile/), admin
-chat/          Conversation, Message, services.py (send_message), forms, views
-               (form + JSON modes, rename), admin
+chat/          Conversation, Message, services.py (send_message, ConversationDeleted),
+               markdown.py (render_markdown: markdown-it-py + nh3), templatetags/
+               chat_markdown.py (the `markdown` filter), forms, views (form + JSON
+               modes, rename, delete), admin
 llm/           plain Python package (not a Django app): the backend-only proxy clients
   __init__.py    complete() which dispatches by provider (PROVIDERS dict)
   base.py        LLMReply, LLMError
@@ -35,7 +38,8 @@ llm/           plain Python package (not a Django app): the backend-only proxy c
   google.py      Google Gemini generateContent adapter
 templates/     base.html (nav + all CSS, incl. the chat app layout), home.html,
                registration/, catalog/, billing/profile.html,
-               chat/ (layout.html + partials _sidebar, _main, _message, _composer,
+               chat/ (layout.html, confirm_delete.html + partials _sidebar, _main,
+               _message, _composer,
                _out_of_credit, _script)
 doc/           study/, plan/, wiki/ (this manual)
 ```
@@ -91,6 +95,7 @@ variable with no values.
 | `/chats/new/` | `chat_new` | `chat.views.chat_new` (GET page, POST starts a chat; form or JSON) | logged in |
 | `/chats/<id>/` | `chat_detail` | `chat.views.chat_detail` (GET page, POST sends; form or JSON) | logged in, owner only (404 otherwise) |
 | `/chats/<id>/rename/` | `chat_rename` | `chat.views.chat_rename` (POST only) | logged in, owner only |
+| `/chats/<id>/delete/` | `chat_delete` | `chat.views.chat_delete` (GET confirmation page, POST delete; other methods → 405) | logged in, owner only |
 | `/admin/` | `admin:*` | Django admin | staff |
 
 ## Request flow for a logged-in page

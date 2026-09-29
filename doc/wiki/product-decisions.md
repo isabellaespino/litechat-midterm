@@ -160,6 +160,65 @@ slow reply doesn't block other users.
 - It's billed honestly: the provider counts it as input tokens. The page says so, and the
   4,000-character cap bounds the cost.
 
+### 9. Markdown replies, sanitized twice
+
+**Decision** (loop 5, study §2 and §5 #1):
+- Model replies render Markdown (bold, lists, code, tables) on the server, through
+  **markdown-it-py with raw HTML off and images off**, then **nh3 with a strict
+  allowlist**.
+- No `<img>`, no `style`, no `on*`, and only `http`/`https`/`mailto` links.
+- Stored replies stay raw Markdown. User messages aren't rendered.
+
+**Why.**
+- Models answer in Markdown. Showing `**` and `|---|` literally made replies hard to
+  read.
+- But model output is untrusted and can be steered by prompt injection, so the
+  requirement was that it can **never** inject HTML or scripts.
+- The libraries were **tested against an XSS corpus**, not chosen by reputation:
+  - Python-Markdown passed `<script>`, `<iframe>` and `javascript:` links straight
+    through.
+  - markdown-it-py and mistune blocked scripts but still emitted `<img>`.
+  - Any parser followed by nh3 was clean.
+- Two layers mean one config slip (e.g. turning `html` on) or one parser bug can't open a
+  hole.
+- Images and `style` are excluded because both make the browser **fetch a URL chosen by
+  the model** without a click, which would be a silent way to exfiltrate a conversation.
+
+### 10. Deleting a chat keeps its charges
+
+**Decision** (loop 5, study §3 and §5 #2–3):
+- Users can delete a chat, after a confirmation page. The chat and its messages are
+  hard-deleted.
+- **Its charges stay in the ledger unchanged, with no refund**, and My Profile shows
+  them as "Deleted chats".
+- If a chat is deleted while a reply is in flight, that reply is still charged, and the
+  request returns 404.
+
+**Why.**
+- The tokens were used and paid to the provider. Refunding on delete would turn delete
+  into a free-usage loophole (chat, delete, get refunded, repeat).
+- Keeping the rows without editing them preserves the append-only ledger and
+  `balance == sum(ledger)`. The `SET_NULL` link already did the right thing.
+- Hard delete matches what users expect from "delete". Their text is really gone.
+- The "Deleted chats" line keeps My Profile honest: the per-chat totals still add up to
+  what was spent.
+- A confirmation page works without JavaScript and avoids blocking browser dialogs.
+
+### 11. Sidebar dates in the user's own time zone
+
+**Decision** (loop 5, study §4 and §5 #4):
+- Each sidebar row shows its **last activity**: `14:05`, `Yesterday`, `Mon`, `Sep 3`
+  or `Sep 3, 2025`.
+- The server renders a `<time>` element in UTC, and the existing script localizes it
+  with `Intl`.
+
+**Why.**
+- Last activity is what the sidebar is sorted by, so the dates read in order.
+- The app runs in UTC, and server-side "today" would be wrong near midnight for most
+  users.
+- Localizing in the browser needs no time-zone setting and no dependency, and it
+  degrades to a correct UTC date without JavaScript.
+
 ## Rejected alternatives
 
 | Alternative | Why we rejected it |
@@ -177,6 +236,14 @@ slow reply doesn't block other users.
 | Per-chat system prompts | A settings UI on every chat, plus rules for how it interacts with the global prompt. Users asked for one Litechat-style global instruction. Can be added later on top of `UserSettings`. |
 | Storing the system prompt on each message | It would make the prompt part of the resent history, adding repeated tokens and cost. It would also mean a changed prompt doesn't apply to old chats. It's read at send time instead. |
 | Treating a Google safety block as an error (502) | The provider did the work and reported usage, so refusing to charge would give it away, and showing "the model failed" would be misleading. It's stored as a charged reply that shows "The model declined to answer this (safety filter)." |
+| Rendering Markdown in the browser (`marked` + `DOMPurify`) | It makes the browser a second renderer, adds JS libraries from a CDN, can't be checked by Django's tests, and shows raw Markdown without JS. Server rendering reuses the one partial for pages and JSON fragments. |
+| Storing rendered HTML instead of rendering on display | It needs a migration, freezes old replies under an old sanitizer policy, and risks HTML reaching a model in the history. Rendering takes about 1 ms per reply. |
+| Python-Markdown or markdown-it-py **without** a sanitizer | Python-Markdown passes raw HTML by design. markdown-it-py alone is safe only as long as one config flag stays set. For "must never inject", the second layer is worth one small wheel. |
+| bleach as the sanitizer | Deprecated by its maintainers (security fixes only). nh3 is the recommended successor. |
+| Refunding a deleted chat's charges | The tokens were used and paid for, and it would make delete a way to get free usage. |
+| Soft-deleting chats | It keeps text the user asked to delete, and adds an "is deleted" filter to every query. |
+| A JavaScript `confirm()` dialog for deleting | It has no no-JS fallback, blocks the page, and can't be styled. |
+| Sidebar dates in UTC only, or a per-user time-zone setting | UTC is wrong near midnight for most users. A setting adds UI nobody asked for, when the browser already knows the time zone. |
 | Showing costs on the chat pages | Chat pages should feel like a chatbot, not a meter. Costs moved to My Profile, and the nav keeps the balance visible (redesign §10 #1). |
 
 ## Departures from the plan
@@ -294,3 +361,37 @@ commits, with no follow-up fix. The code differs from it in these places:
    repo. It ran on the dev database with `uitest`, which gained a few Claude, Gemini and
    GPT chats, about $0.002 of real charges, and an `accounts_usersettings` row. That row
    is currently empty, because the check cleared the prompt at the end.
+
+### Loop 5
+
+The loop 5 plan (`doc/plan/1790681656-loop5-markdown-delete-dates.md`) was followed in
+its five commits, plus one follow-up fix. The code differs from it in these places:
+
+1. **"Deleted chats" alignment fix** (`fix: right-align the Deleted chats total on My
+   Profile`). The float rule for totals was scoped to `.usage-chat`, so the new card's
+   total sat inline. **No assertion caught it; a screenshot did.** The one-shot browser
+   check after the fix asserts the alignment.
+2. **Flash messages moved inside the chat column.** The plan didn't mention it, but
+   "Chat deleted." (shown after the redirect to the next chat) would have rendered as a
+   stray grid cell in `main.chat-app`. `base.html` now wraps messages in a
+   `{% block messages %}`. `layout.html` empties it, and `_main.html` shows them under
+   the chat header.
+3. **The view-level XSS audit was tightened.** The plan said to audit "the thread". The
+   first version counted our own bubble `div`s and flagged correctly escaped text. It
+   now parses exactly each rendered reply (`bubble-text md`), plus the whole thread with
+   only our `div`/`span` wrappers allowed.
+4. **`send_message` was split** into `_save_exchange()` (the writes) and
+   `_conversation_exists()` (the check), and it now **raises `ConversationDeleted` only
+   after the charge's transaction commits**. Raising inside `transaction.atomic()` would
+   have rolled back the very charge the fix exists to keep. Keeping the check separate
+   also lets the backstop test force the "check passes, write fails" path.
+5. **Verification results:**
+   - The Node date check passed 11/11 in each of three time zones.
+   - Real Markdown replies from all three models rendered a table, a list, bold text and
+     a code block, and passed the parsed audit, with stored raw Markdown and correct
+     charges.
+   - The browser check passed 17/17, including the Los Angeles → Tokyo time zone switch
+     (04:47 → 20:47).
+   - `uitest` deleted one old "Browser pass chat", whose three charges now form its
+     "Deleted chats" line.
+

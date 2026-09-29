@@ -70,6 +70,10 @@ user. It's tested in `billing/tests.py::LedgerTests` and `chat/tests.py`.
 
 Never assign `wallet.balance_micros` directly anywhere else.
 
+**Deleting a chat never touches the ledger.** Its charges keep their rows, amounts and
+notes, and only their `message` link becomes NULL. There's no refund. See
+[chat → Deleting a chat](chat.md#deleting-a-chat).
+
 ## Charging a reply
 
 `reply_cost_micros(input_tokens, output_tokens, input_price, output_price)` computes
@@ -88,6 +92,9 @@ The charge flow (details in [Chat → The send flow](chat.md#the-send-flow)):
    goes negative. The overshoot is bounded by the 1,024-output-token cap, and the next
    send is then blocked.
 3. If the proxy fails (`LLMError`), **nothing is charged** and nothing is saved.
+4. If the chat is deleted while the reply is in flight, the reply **is still charged**
+   (with no message, and the note "Reply in deleted chat “title”"), and the request
+   returns 404. See [chat → the send flow](chat.md#the-send-flow).
 
 **Concurrency:** two tabs sending at the same moment can both pass the balance check.
 Both charges then apply via `F()`, so the overdraft is at most two replies. We accept
@@ -147,6 +154,13 @@ log-in) shows:
   amount.
 
 - **Global System Prompt:** see the next section.
+
+- **Deleted chats:** when any `charge` rows have `message = NULL` (their chat was
+  deleted), a **"Deleted chats · $X"** card follows the usage list: "N replies in chats
+  you deleted. Charges aren't refunded when a chat is deleted." It's computed from
+  `ledger.filter(kind="charge", message__isnull=True)` (`deleted_replies`,
+  `deleted_spent`). This keeps the page reconciled: (sum of per-chat totals) + deleted
+  total = "Spent on replies". A test checks that equation.
 
 **`/credit/`** (the loop 1–2 credit page) now returns a **301** to `/profile/`.
 

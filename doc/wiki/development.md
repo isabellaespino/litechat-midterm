@@ -31,7 +31,7 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 
 ## Tests
 
-`python manage.py test` runs 139 tests (at loop 4):
+`python manage.py test` runs 159 tests (at loop 5):
 
 | File | Tests | Covers |
 |---|---|---|
@@ -40,7 +40,7 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 | `catalog/tests.py` | 7 | `/models/` grouping and inactive hiding; dollar↔µ$ in the admin form; the seed command's idempotence |
 | `billing/tests.py` | 22 | sign-up credit for every creation path; the ledger invariant; `str()` in dollars; admin top-ups, adjustments and dollar display; append-only 403s; read-only wallets; **My Profile** (usage by chat and reply, totals, pagination, bounded queries, the `/credit/` 301, the nav "My Profile · $X.XX") |
 | `llm/tests.py` | 31 | `ProxyErrorMappingTests` runs the **same** checks for every row of `PROVIDER_CASES` (OpenAI, Anthropic, Google): 502/503 mapping, timeouts and connection errors, malformed bodies, a 120 s timeout, and a missing key → 503 with no request. It also covers per-adapter request shape, the system prompt present or absent, parsing, usage and stop mapping, and estimates; Anthropic block joining, cache tokens and same-role merging; Google roles, `systemInstruction`, thinking tokens and safety blocks; dispatch; and the no-network guard. |
-| `chat/tests.py` | 58 | everything from loop 3 (form and JSON modes, the sidebar, bubbles, no costs, renaming, the script hooks), plus `AllProvidersChatTests`: for **each** model, its own price in both modes, history resent in its format, 402 before the proxy, 502/503 with nothing charged, a missing key affecting only that provider, a Google safety block, and the three-model picker. Also `GlobalSystemPromptTests`: the prompt in each provider's format, left out when blank, never another user's, read at send time, and charging and 402 unchanged. |
+| `chat/tests.py` | 78 | everything from loop 3 (form and JSON modes, the sidebar, bubbles, no costs, renaming, the script hooks). **Loop 5:** `MarkdownRenderingTests` and `MarkdownInChatTests` (a 14-payload XSS corpus, parsed, through the renderer, the page and both JSON fragments; features; stored raw; user text not rendered); `DeleteChatTests` (confirmation page, access rules, charges kept and balance unchanged, redirect after delete, the "Deleted chats" line reconciling, the in-flight race in both modes, and the backstop path); `SidebarDateTests` (`<time>` markup, bump on send but not on rename, JSON fragments, script hooks). From loop 4: `AllProvidersChatTests`: for **each** model, its own price in both modes, history resent in its format, 402 before the proxy, 502/503 with nothing charged, a missing key affecting only that provider, a Google safety block, and the three-model picker. Also `GlobalSystemPromptTests`: the prompt in each provider's format, left out when blank, never another user's, read at send time, and charging and 402 unchanged. |
 
 ### The LLM proxy is never called from tests
 
@@ -97,6 +97,30 @@ browser at the verify step.
 - **Gotcha:** `runserver --noreload` keeps Django's **cached template loader**, which
   never picks up template edits. Restart the server after changing templates, or run
   without `--noreload`.
+- **Loop 5's check (17/17)** covered:
+  - a real Markdown reply (table, list, bold, code), with no `img`, `script`, `iframe` or
+    `[style]` inside `.md`
+  - sidebar dates localized, with the browser's time zone switched from Los Angeles to
+    Tokyo (`Emulation.setTimezoneOverride`)
+  - the delete flow (× → confirmation → "Chat deleted.", the nav balance unchanged, the
+    My Profile "Deleted chats" line)
+  - phone width (the × visible and dates shown)
+
+  The screenshots caught one more thing no assertion did: the "Deleted chats" total
+  wasn't right-aligned.
+
+### Date formatting under Node
+
+The sidebar's `relativeLabel()` is plain JavaScript, so the verify step extracts it (the
+text between its `// relativeLabel:start/end` markers) and runs it under Node with
+`TZ=America/Los_Angeles`, `TZ=Asia/Tokyo` and `TZ=UTC`. The cases:
+- today, just after midnight, just before midnight yesterday
+- yesterday, 3 and 6 days ago (weekday), 7 days ago
+- earlier this year, last year, and a future time from clock skew
+- **the same UTC timestamp near midnight landing on different local days**: 23:30 UTC on
+  Sep 28 is "Yesterday" in Los Angeles and UTC, but "08:30" (today) in Tokyo
+
+Loop 5: 11/11 in each zone. Like the browser scripts, it lives in the scratchpad.
 
 ## Workflow and commits
 
