@@ -1364,3 +1364,38 @@ class SidebarDateTests(TestCase):
         self.assertIn("localizeTimes();", replace_sidebars)
         after_main_swap = script.split('$(".chat-main").innerHTML = data.main_html;')[1].split("\n")[1]
         self.assertIn("localizeTimes();", after_main_swap)
+
+
+class TitleGenerationAdminTests(TestCase):
+    def setUp(self):
+        from .models import TitleGeneration
+
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        gpt = make_gpt()
+        conversation = Conversation.objects.create(owner=self.user, llm_model=gpt, title="Trip")
+        TitleGeneration.objects.create(conversation=conversation, user=self.user, llm_model=gpt,
+                                       status="ok", title="Trip", input_tokens=150, output_tokens=8, cost_micros=91)
+        TitleGeneration.objects.create(conversation=None, user=self.user, llm_model=gpt,
+                                       status="failed", error_status=503)
+        self.row = TitleGeneration.objects.first()
+
+    def test_admin_list_shows_costs_and_total(self):
+        self.client.force_login(User.objects.create_superuser("root", password=PASSWORD))
+        page = self.client.get(reverse("admin:chat_titlegeneration_changelist"))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "total for the rows shown: $0.000091")
+        self.assertContains(page, "$0.000091")
+        self.assertContains(page, "(deleted)")
+        filtered = self.client.get(reverse("admin:chat_titlegeneration_changelist") + "?status__exact=failed")
+        self.assertContains(filtered, "total for the rows shown: $0.00")
+
+    def test_read_only_and_staff_only(self):
+        self.client.force_login(User.objects.create_superuser("root", password=PASSWORD))
+        self.assertEqual(self.client.get(reverse("admin:chat_titlegeneration_add")).status_code, 403)
+        change = reverse("admin:chat_titlegeneration_change", args=[self.row.pk])
+        self.assertEqual(self.client.post(change, {"title": "x"}).status_code, 403)
+        delete = reverse("admin:chat_titlegeneration_delete", args=[self.row.pk])
+        self.assertEqual(self.client.post(delete, {"post": "yes"}).status_code, 403)
+        self.client.force_login(self.user)  # not staff
+        response = self.client.get(reverse("admin:chat_titlegeneration_changelist"))
+        self.assertEqual(response.status_code, 302)
