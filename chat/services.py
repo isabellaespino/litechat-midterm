@@ -52,7 +52,7 @@ def send_message(user, llm_model, text, conversation=None):
             conversation = Conversation.objects.create(
                 owner=user, llm_model=llm_model, title=title_from(text)
             )
-        Message.objects.create(
+        user_message = Message.objects.create(
             conversation=conversation, role=Message.Role.USER, content=text
         )
         assistant = Message.objects.create(
@@ -75,4 +75,6 @@ def send_message(user, llm_model, text, conversation=None):
             message=assistant,
         )
         conversation.save(update_fields=["updated_at"])
+    # The exchange this call created, for callers that render just the new messages.
+    conversation.new_messages = [user_message, assistant]
     return conversation

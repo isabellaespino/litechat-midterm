@@ -8,6 +8,7 @@ from django.urls import reverse
 
 from billing.models import CreditTransaction, Wallet
 from billing.services import reply_cost_micros
+from config.money import format_dollars
 from catalog.models import LLMModel
 from llm import LLMError, LLMReply
 
@@ -474,3 +475,175 @@ class RenameTests(TestCase):
         self.assertEqual(self.conversation.updated_at, before)
         page = main_region(self.client.get(reverse("chat_detail", args=[newer.pk])))
         self.assertLess(page.index("Newer"), page.index("Renamed older"))
+
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.openai.requests.post")
+class ChatJsonTests(TestCase):
+    """The fetch contract: same checks and statuses as form posts, JSON bodies."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.claude = make_gpt(
+            provider="anthropic", api_model_id="claude-haiku-4-5-20251001", display_name="Claude Haiku"
+        )
+        self.client.force_login(self.user)
+
+    def post_json(self, url, data):
+        return self.client.post(url, data, HTTP_ACCEPT="application/json")
+
+    def start_chat(self, content="Hi there", model=None):
+        return self.post_json(reverse("chat_new"), {"llm_model": (model or self.gpt).pk, "content": content})
+
+    def balance(self):
+        return Wallet.objects.get(user=self.user).balance_micros
+
+    def set_balance(self, micros):
+        Wallet.objects.filter(user=self.user).update(balance_micros=micros)
+
+    def test_new_chat_returns_main_html(self, post):
+        post.return_value = proxy_ok("Hello from the model")
+        response = self.start_chat("First question")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        conversation = Conversation.objects.get()
+        self.assertEqual(data["chat_url"], reverse("chat_detail", args=[conversation.pk]))
+        self.assertIn('class="bubble user"', data["main_html"])
+        self.assertIn("Hello from the model", data["main_html"])
+        self.assertIn('class="model-chip"', data["main_html"])
+        self.assertNotIn("<select", data["main_html"])
+        self.assertIn('aria-current="page">First question</a>', data["sidebar_html"])
+        self.assertEqual(data["balance"], "$1.99")  # $2.00 − $0.0011, rounded down
+        self.assertEqual(self.balance(), 2_000_000 - 1_100)
+
+    def test_existing_chat_returns_new_messages_and_balance(self, post):
+        post.return_value = proxy_ok("A1")
+        self.start_chat("Q1")
+        conversation = Conversation.objects.get()
+        post.return_value = proxy_ok("A2")
+
+        response = self.post_json(reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(re.findall(r'class="bubble (user|assistant)"', data["messages_html"]), ["user", "assistant"])
+        self.assertIn("Q2", data["messages_html"])
+        self.assertIn("A2", data["messages_html"])
+        self.assertNotIn("A1", data["messages_html"])  # only the new exchange
+        self.assertIn("data-sidebar-list", data["sidebar_html"])
+        self.assertEqual(CreditTransaction.objects.filter(kind="charge").count(), 2)
+        self.assertEqual(self.balance(), 2_000_000 - 2 * 1_100)
+        self.assertEqual(data["balance"], format_dollars(self.balance()))
+        self.assertEqual(
+            post.call_args.kwargs["json"]["messages"],
+            [
+                {"role": "user", "content": "Q1"},
+                {"role": "assistant", "content": "A1"},
+                {"role": "user", "content": "Q2"},
+            ],
+        )
+
+    def test_same_charge_as_form_path(self, post):
+        post.return_value = proxy_ok()
+        self.start_chat()
+        json_cost = CreditTransaction.objects.get(kind="charge").amount_micros
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi there"})
+        form_cost = CreditTransaction.objects.filter(kind="charge").order_by("-id").first().amount_micros
+        self.assertEqual(json_cost, form_cost)
+
+    def test_balance_going_negative(self, post):
+        self.set_balance(1)
+        post.return_value = proxy_ok()
+        response = self.start_chat()
+        self.assertEqual(response.json()["balance"], "-$0.01")
+
+    def test_invalid_input_is_400_json(self, post):
+        for response in (
+            self.start_chat(""),
+            self.start_chat("x" * 8001),
+            self.start_chat(model=self.claude),
+        ):
+            with self.subTest(body=response.content[:60]):
+                self.assertEqual(response.status_code, 400)
+                data = response.json()
+                self.assertTrue(data["error"])
+                self.assertTrue(data["field_errors"])
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        LLMModel.objects.filter(pk=self.gpt.pk).update(is_active=False)
+        response = self.post_json(reverse("chat_detail", args=[conversation.pk]), {"content": "Hi"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("no longer available", response.json()["error"])
+        post.assert_not_called()
+
+    def test_out_of_credit_is_402_json(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        for micros, shown in ((0, "$0.00"), (-1, "-$0.01")):
+            with self.subTest(balance=micros):
+                self.set_balance(micros)
+                for response in (
+                    self.start_chat(),
+                    self.post_json(reverse("chat_detail", args=[conversation.pk]), {"content": "Hi"}),
+                ):
+                    self.assertEqual(response.status_code, 402)
+                    data = response.json()
+                    self.assertTrue(data["out_of_credit"])
+                    self.assertEqual(data["balance"], shown)
+        post.assert_not_called()
+
+    def test_other_users_chat_is_404_json(self, post):
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        theirs = Conversation.objects.create(owner=bob, llm_model=self.gpt)
+        response = self.post_json(reverse("chat_detail", args=[theirs.pk]), {"content": "Hi"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"], "Chat not found.")
+        post.assert_not_called()
+
+    def test_proxy_failures_are_502_503_json(self, post):
+        import requests
+
+        for return_value, side_effect, expected in (
+            (proxy_status(500), None, 502),
+            (proxy_status(503), None, 503),
+            (None, requests.Timeout(), 503),
+        ):
+            with self.subTest(expected=expected):
+                post.return_value, post.side_effect = return_value, side_effect
+                response = self.start_chat()
+                self.assertEqual(response.status_code, expected)
+                self.assertTrue(response.json()["error"])
+                self.assertNotIn("upstream says no", response.content.decode())
+        self.assertEqual(Conversation.objects.count(), 0)
+        self.assertEqual(Message.objects.count(), 0)
+        self.assertEqual(self.balance(), 2_000_000)
+
+    def test_logged_out_json_is_401_but_form_still_redirects(self, post):
+        self.client.logout()
+        response = self.start_chat()
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["login_url"], reverse("login"))
+        form = self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi"})
+        self.assertEqual(form.status_code, 302)
+        self.assertTrue(form.url.startswith(reverse("login")))
+        post.assert_not_called()
+
+    def test_browser_accept_header_gets_form_behaviour(self, post):
+        post.return_value = proxy_ok()
+        response = self.client.post(
+            reverse("chat_new"),
+            {"llm_model": self.gpt.pk, "content": "Hi"},
+            HTTP_ACCEPT="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_json_html_is_escaped_and_has_no_costs(self, post):
+        post.return_value = proxy_ok("<script>alert(1)</script>")
+        data = self.start_chat().json()
+        self.assertNotIn("<script>alert(1)</script>", data["main_html"])
+        self.assertIn("&lt;script&gt;", data["main_html"])
+        conversation = Conversation.objects.get()
+        data = self.post_json(reverse("chat_detail", args=[conversation.pk]), {"content": "More"}).json()
+        for html in (data["messages_html"], data["sidebar_html"]):
+            for text in ("tokens", "per 1M", "$"):
+                self.assertNotIn(text, html)
