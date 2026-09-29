@@ -7,6 +7,7 @@ from catalog.models import LLMModel
 
 from . import LLMError, complete
 from . import anthropic as anthropic_client
+from . import google as google_client
 from . import openai as openai_client
 
 MESSAGES = [
@@ -65,6 +66,19 @@ def anthropic_body(blocks=None, stop_reason="end_turn", usage=True, **usage_extr
     return body
 
 
+def google_body(parts=None, finish_reason="STOP", usage=True, content=True, **usage_extra):
+    candidate = {"index": 0, "finishReason": finish_reason}
+    if content:
+        candidate["content"] = {
+            "role": "model",
+            "parts": parts if parts is not None else [{"text": "Hello! How can I help?"}],
+        }
+    body = {"candidates": [candidate]}
+    if usage:
+        body["usageMetadata"] = {"promptTokenCount": 12, "candidatesTokenCount": 8, "totalTokenCount": 20, **usage_extra}
+    return body
+
+
 # One row per provider adapter. The shared tests below run for every row, so the
 # 120 s timeout, the 502/503 mapping and the missing-key 503 are the same for all.
 PROVIDER_CASES = [
@@ -90,6 +104,20 @@ PROVIDER_CASES = [
             {"type": "message"},
             {"content": "not a list"},
             {"content": [{"type": "text"}]},
+            ["not", "an", "object"],
+        ],
+    },
+    {
+        "name": "google",
+        "complete": google_client.complete,
+        "model": "gemini-3.8-flash",
+        "key_setting": "GOOGLE_API_KEY",
+        "ok_body": google_body,
+        "malformed_bodies": [
+            {"usageMetadata": {}},
+            {"candidates": []},
+            {"candidates": [{"finishReason": "STOP"}]},  # no content and not SAFETY
+            {"candidates": [{"content": {"parts": "not a list"}, "finishReason": "STOP"}]},
             ["not", "an", "object"],
         ],
     },
@@ -287,6 +315,73 @@ class AnthropicClientTests(SimpleTestCase):
 
 @override_settings(**TEST_KEYS)
 @mock.patch("llm.http.requests.post")
+class GoogleClientTests(SimpleTestCase):
+    def call(self, post, body=None, messages=MESSAGES, system=None):
+        post.return_value = proxy_response(json_body=body or google_body())
+        return google_client.complete("gemini-3.8-flash", messages, system=system)
+
+    def test_request_shape(self, post):
+        self.call(post)
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], "https://proxy.example/google/v1beta/models/gemini-3.8-flash:generateContent")
+        self.assertEqual(kwargs["headers"]["x-goog-api-key"], "test-google-key")
+        self.assertNotIn("Authorization", kwargs["headers"])
+        body = kwargs["json"]
+        self.assertEqual(body["generationConfig"], {"maxOutputTokens": 1024, "thinkingConfig": {"thinkingBudget": 0}})
+        self.assertEqual(kwargs["timeout"], 120)
+
+    def test_roles_and_parts(self, post):
+        self.call(post)
+        self.assertEqual(
+            post.call_args.kwargs["json"]["contents"],
+            [
+                {"role": "user", "parts": [{"text": "Hi"}]},
+                {"role": "model", "parts": [{"text": "Hello!"}]},
+                {"role": "user", "parts": [{"text": "Say hello in one sentence."}]},
+            ],
+        )
+
+    def test_system_instruction_shape(self, post):
+        self.call(post, system="Be brief.")
+        body = post.call_args.kwargs["json"]
+        self.assertEqual(body["systemInstruction"], {"parts": [{"text": "Be brief."}]})
+        self.assertEqual(len(body["contents"]), 3)  # not injected as a message
+
+    def test_no_system_prompt_means_no_system_instruction(self, post):
+        self.call(post, system=None)
+        self.assertNotIn("systemInstruction", post.call_args.kwargs["json"])
+
+    def test_parts_joined_and_usage_mapped(self, post):
+        reply = self.call(post, google_body(parts=[{"text": "Hello, "}, {"text": "world."}], thoughtsTokenCount=4))
+        self.assertEqual(reply.text, "Hello, world.")
+        self.assertEqual((reply.input_tokens, reply.output_tokens), (12, 8 + 4))
+        self.assertEqual(reply.stop_reason, "stop")
+        self.assertFalse(reply.usage_estimated)
+
+    def test_stop_reasons(self, post):
+        self.assertEqual(self.call(post, google_body(finish_reason="MAX_TOKENS")).stop_reason, "length")
+        self.assertEqual(self.call(post, google_body(finish_reason="RECITATION")).stop_reason, "recitation")
+
+    def test_absent_candidates_count_is_zero(self, post):
+        body = google_body()
+        del body["usageMetadata"]["candidatesTokenCount"]
+        reply = self.call(post, body)
+        self.assertEqual((reply.input_tokens, reply.output_tokens), (12, 0))
+
+    def test_safety_block_without_text_is_a_charged_reply(self, post):
+        reply = self.call(post, google_body(content=False, finish_reason="SAFETY"))
+        self.assertEqual(reply.text, "")
+        self.assertEqual(reply.stop_reason, "safety")
+        self.assertEqual((reply.input_tokens, reply.output_tokens), (12, 8))
+
+    def test_missing_usage_is_estimated(self, post):
+        reply = self.call(post, google_body(parts=[{"text": "12345678"}], usage=False))
+        self.assertTrue(reply.usage_estimated)
+        self.assertEqual((reply.input_tokens, reply.output_tokens), (9, 2))
+
+
+@override_settings(**TEST_KEYS)
+@mock.patch("llm.http.requests.post")
 class DispatchTests(SimpleTestCase):
     def test_dispatch_by_provider(self, post):
         post.return_value = proxy_response(json_body=openai_body())
@@ -298,11 +393,16 @@ class DispatchTests(SimpleTestCase):
         self.assertEqual(complete(claude, MESSAGES).text, "From Claude")
         self.assertTrue(post.call_args.args[0].endswith("/anthropic/v1/messages"))
 
+        post.return_value = proxy_response(json_body=google_body(parts=[{"text": "From Gemini"}]))
+        gemini = LLMModel(provider="google", api_model_id="gemini-3.8-flash")
+        self.assertEqual(complete(gemini, MESSAGES).text, "From Gemini")
+        self.assertIn("/models/gemini-3.8-flash:generateContent", post.call_args.args[0])
+
         unknown = LLMModel(provider="mistral", api_model_id="some-model")
         with self.assertRaises(LLMError) as ctx:
             complete(unknown, MESSAGES)
         self.assertEqual(ctx.exception.status, 503)
-        self.assertEqual(post.call_count, 2)  # the unknown provider sent nothing
+        self.assertEqual(post.call_count, 3)  # the unknown provider sent nothing
 
     def test_system_is_passed_through(self, post):
         post.return_value = proxy_response(json_body=openai_body())

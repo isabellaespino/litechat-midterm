@@ -1,6 +1,6 @@
 """Backend-only clients for the LLM proxy. Browser code never calls the proxy."""
 
-from . import anthropic, openai
+from . import anthropic, google, openai
 from .base import LLMError, LLMReply
 
 __all__ = ["LLMError", "LLMReply", "complete"]
@@ -9,6 +9,7 @@ __all__ = ["LLMError", "LLMReply", "complete"]
 PROVIDERS = {
     "openai": openai.complete,
     "anthropic": anthropic.complete,
+    "google": google.complete,
 }
 
 
