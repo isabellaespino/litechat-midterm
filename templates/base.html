@@ -152,6 +152,9 @@
       .chat-delete { opacity: 1; }
       .bubble { max-width: 90%; }
       .composer-row { flex-wrap: wrap; }
+      /* Phones: the model chip (and the memories switch) take the first line; the message
+         box and Send always share their own line, so neither is squeezed. */
+      .composer-row textarea { flex: 1 1 calc(100% - 96px); min-width: 0; }
       .composer-row select { max-width: 100%; width: 100%; }
     }
 
