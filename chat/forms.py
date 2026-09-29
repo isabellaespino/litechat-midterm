@@ -37,3 +37,7 @@ class NewChatForm(MessageForm):
 
     def clean_llm_model(self):
         return chat_models().get(pk=self.cleaned_data["llm_model"])
+
+
+class RenameForm(forms.Form):
+    title = forms.CharField(label="Chat title", max_length=100)

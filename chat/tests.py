@@ -420,3 +420,57 @@ class ChatViewTests(TestCase):
         response = self.client.get(reverse("model_list"))
         self.assertContains(response, "Coming soon", count=1)
         self.assertContains(response, f'href="{reverse("chat_new")}">Start a chat')
+
+
+class RenameTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.conversation = Conversation.objects.create(
+            owner=self.user, llm_model=self.gpt, title="Old title"
+        )
+        self.url = reverse("chat_rename", args=[self.conversation.pk])
+        self.client.force_login(self.user)
+
+    def test_rename(self):
+        response = self.client.post(self.url, {"title": "  Trip to Rome  "})
+        self.assertRedirects(response, reverse("chat_detail", args=[self.conversation.pk]))
+        self.conversation.refresh_from_db()
+        self.assertEqual(self.conversation.title, "Trip to Rome")
+        page = self.client.get(reverse("chat_detail", args=[self.conversation.pk]))
+        self.assertContains(page, "<h1>Trip to Rome</h1>", html=True)
+        self.assertContains(page, 'aria-current="page">Trip to Rome</a>')
+        self.assertContains(self.client.get(reverse("profile")), "Trip to Rome")
+
+    def test_invalid_titles_are_400(self):
+        for title in ("", "   ", "x" * 101):
+            with self.subTest(title=title[:10]):
+                response = self.client.post(self.url, {"title": title})
+                self.assertEqual(response.status_code, 400)
+                self.assertContains(response, '<details class="rename" open>', status_code=400)
+        self.conversation.refresh_from_db()
+        self.assertEqual(self.conversation.title, "Old title")
+
+    def test_other_users_chat_is_404(self):
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        theirs = Conversation.objects.create(owner=bob, llm_model=self.gpt, title="Bob's")
+        response = self.client.post(reverse("chat_rename", args=[theirs.pk]), {"title": "Mine now"})
+        self.assertEqual(response.status_code, 404)
+        theirs.refresh_from_db()
+        self.assertEqual(theirs.title, "Bob's")
+
+    def test_get_is_405_and_anonymous_is_redirected(self):
+        self.assertEqual(self.client.get(self.url).status_code, 405)
+        self.client.logout()
+        response = self.client.post(self.url, {"title": "New"})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("login")))
+
+    def test_rename_keeps_sidebar_order(self):
+        newer = Conversation.objects.create(owner=self.user, llm_model=self.gpt, title="Newer")
+        before = self.conversation.updated_at
+        self.client.post(self.url, {"title": "Renamed older"})
+        self.conversation.refresh_from_db()
+        self.assertEqual(self.conversation.updated_at, before)
+        page = main_region(self.client.get(reverse("chat_detail", args=[newer.pk])))
+        self.assertLess(page.index("Newer"), page.index("Renamed older"))

@@ -2,11 +2,12 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from billing.services import get_wallet
 from llm import LLMError
 
-from .forms import MessageForm, NewChatForm
+from .forms import MessageForm, NewChatForm, RenameForm
 from .models import Conversation
 from .services import send_message
 
@@ -92,3 +93,20 @@ def chat_detail(request, pk):
         context["error"] = error.message
         return render(request, TEMPLATE, context, status=error.status)
     return redirect(reverse("chat_detail", args=[conversation.pk]) + "#latest")
+
+
+@login_required
+@require_POST
+def chat_rename(request, pk):
+    conversation = get_object_or_404(
+        Conversation.objects.select_related("llm_model"), pk=pk, owner=request.user
+    )
+    form = RenameForm(request.POST)
+    if not form.is_valid():
+        context = chat_context(
+            request, conversation, form=MessageForm(), rename_form=form, rename_open=True
+        )
+        return render(request, TEMPLATE, context, status=400)
+    # update() leaves updated_at alone, so renaming doesn't reorder the sidebar.
+    Conversation.objects.filter(pk=conversation.pk).update(title=form.cleaned_data["title"])
+    return redirect("chat_detail", pk=conversation.pk)
