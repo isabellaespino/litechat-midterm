@@ -43,6 +43,16 @@
     <a href="{% url 'home' %}">Home</a>
     <span class="spacer"></span>
     {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
+    {% if user.is_authenticated %}
+      <span class="muted">Hi, {{ user.username }}</span>
+      <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button type="submit">Log out</button>
+      </form>
+    {% else %}
+      <a href="{% url 'login' %}">Log in</a>
+      <a href="{% url 'signup' %}">Sign up</a>
+    {% endif %}
   </nav>
   <main>
     {% if messages %}

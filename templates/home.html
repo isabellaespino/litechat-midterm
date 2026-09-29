@@ -5,4 +5,7 @@
   <p>Chat with models from OpenAI, Anthropic and Google without a subscription.
      You pay only for what you use: each reply is charged by the tokens it uses,
      from a prepaid credit balance.</p>
+  {% if not user.is_authenticated %}
+    <p><a class="btn" href="{% url 'signup' %}">Sign up</a></p>
+  {% endif %}
 {% endblock %}
