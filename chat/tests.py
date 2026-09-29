@@ -1647,3 +1647,74 @@ class CleanTitleTests(TestCase):
         for raw, expected in cases.items():
             with self.subTest(raw=raw[:20]):
                 self.assertEqual(clean_title(raw), expected)
+
+
+# --- Memories in every chat (loop 7) ------------------------------------------------
+
+@override_settings(
+    OPENAI_API_KEY="test-openai-key",
+    ANTHROPIC_API_KEY="test-anthropic-key",
+    GOOGLE_API_KEY="test-google-key",
+)
+@mock.patch("llm.http.requests.post")
+class MemoriesInChatTests(TestCase):
+    BLOCK = "About the user (notes they asked you to remember):\n- I'm a student\n- keep answers short"
+
+    def setUp(self):
+        from django.core.management import call_command
+
+        from accounts.models import Memory
+
+        call_command("seed", stdout=mock.Mock())
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.client.force_login(self.user)
+        Memory.objects.create(user=self.user, text="I'm a student")
+        Memory.objects.create(user=self.user, text="keep answers short")
+
+    def send(self, post, provider, api_model_id):
+        post.return_value = provider_reply(provider)
+        model = LLMModel.objects.get(api_model_id=api_model_id)
+        self.assertEqual(
+            self.client.post(reverse("chat_new"), {"llm_model": model.pk, "content": "Hello"}).status_code, 302
+        )
+        return post.call_args.kwargs["json"]
+
+    def test_memories_only_for_each_provider(self, post):
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                self.assertEqual(sent_system_prompt(provider, self.send(post, provider, api_model_id)), self.BLOCK)
+
+    def test_prompt_then_memories_for_each_provider(self, post):
+        from accounts.services import get_settings
+
+        row = get_settings(self.user)
+        row.system_prompt = "Always reply in French."
+        row.save()
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                body = self.send(post, provider, api_model_id)
+                self.assertEqual(sent_system_prompt(provider, body), "Always reply in French.\n\n" + self.BLOCK)
+
+    def test_read_at_send_time_and_isolated(self, post):
+        from accounts.models import Memory
+
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        Memory.objects.create(user=bob, text="Bob's secret note")
+        body = self.send(post, "anthropic", "claude-haiku-4-5-20251001")
+        self.assertNotIn("Bob's secret", str(body))
+        conversation = Conversation.objects.get()
+        Memory.objects.filter(user=self.user).delete()
+        post.return_value = provider_reply("anthropic")
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Again"})
+        self.assertNotIn("system", post.call_args.kwargs["json"])  # nothing left to send
+
+    def test_title_call_never_carries_memories(self, post):
+        body = self.send(post, "google", "gemini-3.8-flash")
+        self.assertEqual(sent_system_prompt("google", body), self.BLOCK)
+        conversation = Conversation.objects.get()
+        post.return_value = provider_reply("google", text="Greetings", input_tokens=150, output_tokens=8)
+        response = self.client.post(reverse("chat_title", args=[conversation.pk]), HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        title_body = post.call_args.kwargs["json"]
+        self.assertNotIn("systemInstruction", title_body)
+        self.assertNotIn("student", str(title_body))

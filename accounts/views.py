@@ -10,7 +10,10 @@ from django.views.generic import CreateView
 
 from billing.views import render_profile
 
-from .forms import SignUpForm, SystemPromptForm
+from django.shortcuts import get_object_or_404
+
+from .forms import MemoryForm, SignUpForm, SystemPromptForm
+from .models import Memory
 from .services import get_settings
 
 
@@ -58,3 +61,23 @@ def system_prompt(request):
         "System prompt saved." if user_settings.system_prompt else "System prompt cleared.",
     )
     return redirect(reverse("profile") + "#system-prompt")
+
+
+@login_required
+@require_POST
+def memory_add(request):
+    form = MemoryForm(request.POST, user=request.user)
+    if not form.is_valid():
+        return render_profile(request, status=400, memory_form=form)
+    Memory.objects.create(user=request.user, text=form.cleaned_data["text"])
+    messages.success(request, "Memory added.")
+    return redirect(reverse("profile") + "#memories")
+
+
+@login_required
+@require_POST
+def memory_delete(request, pk):
+    """Deleted immediately: no confirmation page (loop 7, decision #6)."""
+    get_object_or_404(Memory, pk=pk, user=request.user).delete()
+    messages.success(request, "Memory deleted.")
+    return redirect(reverse("profile") + "#memories")

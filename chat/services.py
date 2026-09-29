@@ -3,7 +3,7 @@ import re
 from django.db import DatabaseError, transaction
 
 import llm
-from accounts.services import system_prompt_for
+from accounts.services import system_text_for
 from billing.models import CreditTransaction
 from billing.services import post_transaction, reply_cost_micros
 
@@ -65,8 +65,8 @@ def send_message(user, llm_model, text, conversation=None):
     still charged and ConversationDeleted is raised.
     """
     messages = history_for(conversation) + [{"role": "user", "content": text}]
-    # The user's Global System Prompt, read at send time (None when not set).
-    reply = llm.complete(llm_model, messages, system=system_prompt_for(user))
+    # The Global System Prompt plus memories, read at send time (None when neither is set).
+    reply = llm.complete(llm_model, messages, system=system_text_for(user))
 
     cost = reply_cost_micros(
         reply.input_tokens,

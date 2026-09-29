@@ -15,6 +15,8 @@ urlpatterns = [
     path("models/", include("catalog.urls")),
     path("", include("billing.urls")),
     path("profile/system-prompt/", account_views.system_prompt, name="system_prompt"),
+    path("profile/memories/", account_views.memory_add, name="memory_add"),
+    path("profile/memories/<int:pk>/delete/", account_views.memory_delete, name="memory_delete"),
     path("chats/", include("chat.urls")),
     path("admin/", admin.site.urls),
 ]
