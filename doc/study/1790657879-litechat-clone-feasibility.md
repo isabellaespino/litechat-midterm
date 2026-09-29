@@ -110,9 +110,10 @@ All money amounts are **integers of micro-dollars** (1 USD = 1,000,000 µ$). See
 
 - **User**: Django's built-in `auth.User`, unchanged.
 - **Wallet** (one-to-one with User): `balance_micros` (a signed integer, because it can go
-  slightly negative, §6.3). It's created automatically on sign-up with a $0 balance.
+  slightly negative, §6.3). It's created automatically for every new user, and is
+  immediately credited with **$2.00 of sign-up credit**, recorded as a ledger entry.
 - **CreditTransaction** (append-only ledger): user, signed `amount_micros`, `kind`
-  (`topup` / `charge` / `adjustment`), optional FK to the message it paid for,
+  (`signup` / `topup` / `charge` / `adjustment`), optional FK to the message it paid for,
   `created_by` (the admin who made a top-up), note, timestamp.
 - **LLMModel** (catalog, editable in Django admin):
   - `provider`: `openai` / `anthropic` / `google`. The picker and the admin list are
@@ -133,15 +134,17 @@ All money amounts are **integers of micro-dollars** (1 USD = 1,000,000 µ$). See
 Storing the cost on each message and in the ledger makes every charge auditable.
 Admins can check that `balance_micros == sum(ledger)`.
 
-**Seed data:** exactly the three proxy models, one per provider. Suggested tiers and
-prices are notional (every model is DeepSeek Flash underneath). Final numbers go in the
-plan, and admins can change them.
+**Seed data:** exactly the three proxy models, one per provider. These are starting
+values (every model is DeepSeek Flash underneath), and admins can change them.
 
-| Provider | Model id | Suggested tier |
-|---|---|---|
-| Google | `gemini-3.8-flash` | value |
-| Anthropic | `claude-haiku-4-5-20251001` | standard |
-| OpenAI | `gpt-5.6-luna` | standard |
+| Provider | Model id | Display name | Tier | Input / output price per 1M tokens |
+|---|---|---|---|---|
+| Anthropic | `claude-haiku-4-5-20251001` | Claude Haiku | value | $1.00 / $5.00 |
+| OpenAI | `gpt-5.6-luna` | GPT-5.6 Luna | value | $0.50 / $2.00 |
+| Google | `gemini-3.8-flash` | Gemini Flash | value | $0.30 / $2.50 |
+
+In micro-dollars, $1.00 per 1M tokens is 1,000,000 µ$ per 1M tokens, i.e. exactly 1 µ$
+per token, so every seeded price is a whole number.
 
 ## 6. Key tradeoffs
 
@@ -182,9 +185,10 @@ The cost of a reply is only known *after* the proxy returns usage. The decision:
 - **Block when the balance is $0 or less.** Sending is refused before any proxy call.
 - **Always charge the actual cost** of every reply, even if that takes the balance
   slightly negative. The next top-up covers the deficit first.
-- **The overdraft is bounded** by a fixed per-request output cap (`max_tokens`, e.g.
-  1,024, stored as a setting). The worst case is one reply's cost at the final positive
-  balance, which is typically well under one cent. We don't shrink replies based on the
+- **The overdraft is bounded** by a fixed per-request output cap of **1,024 output
+  tokens** (`max_tokens`, stored as a setting). The worst case is one reply's cost at the
+  final positive balance. At the seeded prices, 1,024 output tokens costs at most about
+  half a cent (Claude Haiku: 1,024 × $5/1M ≈ $0.0051), plus the input. We don't shrink replies based on the
   balance, so users never get a surprise truncation.
 
 Alternatives considered: sizing the output cap to what the balance can afford (rejected:
@@ -301,11 +305,11 @@ money library (integers of micro-dollars are enough).
   `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and
   `GOOGLE_API_KEY` with no values.
 - **`.gitignore`:** `db.sqlite3`, `.venv/`, `.env`, `__pycache__/`, `*.pyc`.
-- **Seed data:** an idempotent `seed` management command (`update_or_create` on
-  `api_model_id`). It loads the three proxy models only, and optionally a demo user with
-  a small starting credit recorded as a ledger top-up. The command is preferred over a
-  fixture because it's idempotent and can create a user with a hashed password. It must
-  never delete or reset existing rows.
+- **Seed data:** an idempotent `seed` management command (`get_or_create` on
+  `api_model_id`). It loads the three proxy models only. New users get their $2.00 from
+  the automatic sign-up credit, so the seed command doesn't need a demo user. The command
+  is preferred over a fixture because it's idempotent: re-running it skips models that
+  already exist, so it never duplicates rows or overwrites prices an admin has edited. It must never delete or reset existing rows.
 - **Navigation:** a base template with a nav bar containing Chats (list), New chat,
   Available credit (linking to the usage history), Admin (staff only), and Log in/Sign
   up/Log out. Every chat in the list links to its page, and there's a rename form on the
@@ -343,8 +347,12 @@ money library (integers of micro-dollars are enough).
 | 5 | Invalid form status | 400 (§6.8). |
 | 6 | Organization billing | Out of scope (§9). |
 | 7 | Proxy env var names | Follow the spec (`OPENAI_API_KEY`, etc.), not the docs' `BUILD_OPENAI_KEY` (§4). |
+| 8 | Seeded tiers | All three seeded models are **value** tier (§5). |
+| 9 | Seeded prices (input / output per 1M tokens) | Claude Haiku $1.00 / $5.00; GPT-5.6 Luna $0.50 / $2.00; Gemini Flash $0.30 / $2.50 (§5). |
+| 10 | Output cap | Replies are capped at **1,024 output tokens** (§6.3). |
+| 11 | Sign-up credit | Every new user automatically receives **$2.00**, recorded as a `signup` ledger entry (§5). |
 
-Still open for the plan: the exact seeded prices, and the output cap value.
+No open questions remain for loop 1.
 
 ## 11. Recommendation
 
