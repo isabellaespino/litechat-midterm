@@ -26,6 +26,10 @@
     .messages li.error { background: #fdecea; color: var(--error); }
     form p { margin: 0 0 12px; }
     label { display: block; font-weight: 600; margin-bottom: 4px; }
+    textarea, select { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+    .msg-user { background: #f3f6fa; }
+    .usage { font-size: .85rem; margin-top: 6px; }
+    .badge.soon { background: #f1f1f4; color: var(--muted); }
     input[type=text], input[type=password] { width: 100%; max-width: 360px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
     .helptext, .helptext ul { color: var(--muted); font-size: .85rem; }
     .errorlist { color: var(--error); padding-left: 18px; margin: 4px 0; }
@@ -42,6 +46,10 @@
     <a class="brand" href="{% url 'home' %}">Litechat</a>
     <a href="{% url 'home' %}">Home</a>
     <a href="{% url 'model_list' %}">Models</a>
+    {% if user.is_authenticated %}
+      <a href="{% url 'chat_list' %}">Chats</a>
+      <a href="{% url 'chat_new' %}">New chat</a>
+    {% endif %}
     <span class="spacer"></span>
     {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
     {% if user.is_authenticated %}

@@ -6,7 +6,7 @@
      You pay only for what you use: each reply is charged by the tokens it uses,
      from a prepaid credit balance.</p>
   <p>
-    {% if not user.is_authenticated %}<a class="btn" href="{% url 'signup' %}">Sign up</a>{% endif %}
+    {% if user.is_authenticated %}<a class="btn" href="{% url 'chat_new' %}">Start a chat</a>{% else %}<a class="btn" href="{% url 'signup' %}">Sign up</a>{% endif %}
     <a href="{% url 'model_list' %}">Browse models</a>
   </p>
 {% endblock %}
