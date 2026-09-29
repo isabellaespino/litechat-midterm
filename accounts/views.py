@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import login
 from django.contrib.auth import views as auth_views
 from django.shortcuts import redirect
@@ -14,6 +15,10 @@ class SignUpView(CreateView):
         if request.user.is_authenticated:
             return redirect("home")
         return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        kwargs.setdefault("signup_credit_micros", settings.SIGNUP_CREDIT_MICROS)
+        return super().get_context_data(**kwargs)
 
     def form_valid(self, form):
         user = form.save()

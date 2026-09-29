@@ -1,4 +1,4 @@
-<!doctype html>
+{% load money %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -45,6 +45,7 @@
     <span class="spacer"></span>
     {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
     {% if user.is_authenticated %}
+      <a class="credit" href="{% url 'credit' %}">Available credit: {{ available_credit_micros|dollars }}</a>
       <span class="muted">Hi, {{ user.username }}</span>
       <form method="post" action="{% url 'logout' %}">
         {% csrf_token %}

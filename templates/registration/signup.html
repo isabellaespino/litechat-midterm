@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% load money %}
 {% block title %}Sign up{% endblock %}
 {% block content %}
   <h1>Sign up</h1>
+  <p class="muted">New accounts start with {{ signup_credit_micros|dollars }} of free credit.</p>
   <form method="post" class="card">
     {% csrf_token %}
     {{ form.as_p }}
