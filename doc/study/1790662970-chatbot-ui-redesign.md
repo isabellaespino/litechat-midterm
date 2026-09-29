@@ -4,7 +4,7 @@
 - **Type:** study (feasibility and tradeoffs; no code)
 - **Builds on:** `doc/study/1790657879-litechat-clone-feasibility.md`. Loop 2 is on
   `main`; see `doc/wiki/chat.md`.
-- **Status:** draft for review. Decisions needed in §10.
+- **Status:** decisions recorded (§10). Planned as loop 3.
 
 ## 1. Request
 
@@ -191,8 +191,8 @@ three adapters exist.
   - **New chat:** a `<select>` of chat-enabled models, grouped by provider, next to the
     textarea.
   - **Existing chat:** the model is fixed per chat (first study, §6.6), so the picker
-    shows as a read-only chip with the model name. Switching per message stays deferred
-    (§10 Q2). Today only one model can chat anyway.
+    shows as a read-only chip with the model name (§10 #2). Switching per message stays
+    deferred. Today only one model can chat anyway.
 - **Out of credit:** a notice right above the composer: "You're out of credit. Contact
   an administrator to top up", linking to My Profile. The composer is disabled. The
   server still enforces 402 whatever the browser shows.
@@ -251,8 +251,7 @@ admin).
 
 Paginate the chats with Django's `Paginator`, 20 per page.
 
-**Nav:** "Available credit: $X.XX" is replaced by **My Profile**, whether or not it
-carries a small balance (§10 Q1). `/credit/` returns a **301** to `/profile/`, so old
+**Nav:** "Available credit: $X.XX" is replaced by **"My Profile · $X.XX"** (§10 #1). `/credit/` returns a **301** to `/profile/`, so old
 links and bookmarks keep working and the status code is correct. The wiki and README
 references move to `/profile/`. The admin is unchanged.
 
@@ -281,23 +280,18 @@ references move to `/profile/`. The admin is unchanged.
     step (and optionally the Chrome browser tooling), not a new test dependency.
 - **No new Python dependencies** in any recommended option.
 
-## 10. Open questions (decisions for the plan)
+## 10. Decisions
 
-1. **Nav:** replace "Available credit: $X.XX" with a plain **My Profile** link, or
-   **"My Profile · $1.99"**? Recommendation: **plain My Profile**. It matches "no costs
-   on chat pages", and the balance is one click away.
-2. **Model picker in an existing chat:** a read-only chip (recommended; the model stays
-   fixed per chat), or allow switching models per message now? Only one model can chat
-   today, so switching adds nothing until the adapters land.
-3. **Rename chats:** fold loop 3's rename into this redesign? It fits naturally as a
-   pencil icon or small form in the chat header, and works without JS. Recommendation:
-   **yes, include it**.
-4. **`/chats/` list page:** redirect it to the latest chat (the sidebar replaces it), or
-   keep it as a simple list? Recommendation: **redirect**, and keep a "Chats" nav link
-   that goes to the chat view.
-5. **Script delivery:** inline (recommended) or a static file plus `DJANGO_DEBUG=true`
-   in the README (§9)?
-6. **Streaming:** confirm **whole replies** for now (§5).
+Decided on 2026-09-29, before planning loop 3:
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Nav | **"My Profile · $1.99"**: the link carries the available credit (rounded down to the cent), so the balance stays visible after costs leave the chat pages. It replaces "Available credit: $X.XX". This departs from the study's recommendation of a plain link. |
+| 2 | Model picker in an existing chat | A **fixed model label** (read-only chip) per chat. The `<select>` appears only when starting a new chat. Switching models per message stays deferred. |
+| 3 | Rename chats | **Included** in this redesign, as a rename form in the chat header. |
+| 4 | `/chats/` | **Redirects to the latest chat**, or to New chat when the user has none. The sidebar replaces the list page. |
+| 5 | Script delivery | An **inline `<script>`** in the chat template. No static file, no `DEBUG` change, no dependency. |
+| 6 | Streaming | **Whole replies**, no streaming (§5). Revisit in its own study once all three adapters exist. |
 
 ## 11. Recommendation and suggested plan shape
 
@@ -314,7 +308,7 @@ My Profile page. There are no new dependencies. Suggested commits, one each:
 4. `feat: send chat messages without reloading`. The inline script: Enter to send, the
    thinking bubble, errors restoring the draft, `pushState` and the sidebar update for
    new chats.
-5. (If Q3 = yes) `feat: rename chats from the chat header`.
+5. `feat: rename chats from the chat header` (§10 #3).
 6. `chore: update README` for the profile, and the chat usage notes.
 
 Then verify: the Django tests, plus a manual browser pass over Enter/Shift+Enter, the
