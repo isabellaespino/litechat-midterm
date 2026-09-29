@@ -1,13 +1,14 @@
 # Litechat
 
 Pay-as-you-go AI chat for people who don't want a subscription. Each user has a
-prepaid US dollar balance ("Available credit") that admins top up in Django admin.
+prepaid US dollar balance that admins top up in Django admin.
 Users pick a model from OpenAI, Anthropic or Google, and each reply is charged by
 the tokens it uses. Built with Django, SQLite and server-rendered templates.
 
-> **Status: loop 2.** Chat works end to end with the OpenAI model (GPT-5.6 Luna), and
-> each reply is charged from its token usage. The Anthropic and Google models are listed
-> as "Coming soon". Renaming chats arrives in loop 3.
+> **Status: loop 3.** Chat works end to end with the OpenAI model (GPT-5.6 Luna), in a
+> chatbot-style layout, and each reply is charged from its token usage. Usage and costs
+> are shown on **My Profile**. The Anthropic and Google models are listed as "Coming
+> soon".
 
 ## Requirements
 
@@ -59,15 +60,29 @@ Then open http://localhost:8000.
 - **Sign up** from the nav bar. Every new account starts with **$2.00** of credit.
 - **Models** lists the available models, grouped by provider, with their prices per
   1M tokens.
-- **Chats → New chat**: pick a model, type your first message and send. Replies arrive
-  whole (it can take a few seconds) and each shows its token usage and cost, e.g.
-  `1000 in / 300 out tokens · $0.0011`. Replies are capped at 1,024 output tokens.
-  Your whole conversation is resent with each message, so long chats cost more per
-  reply.
-- **Available credit** (in the nav bar when logged in) shows your balance and history.
+- **Chats** opens your most recent chat (or a new one). The sidebar lists your chats,
+  newest first, with a **+ New chat** button.
+  - In a new chat, pick a model next to the message box. An existing chat keeps its
+    model, shown as a label.
+  - Press **Enter to send**, and **Shift+Enter** for a new line. Your message appears
+    right away with a "thinking" indicator, and the whole reply replaces it without
+    reloading the page. Replies can take a few seconds (the proxy is allowed up to 120
+    seconds).
+  - **Rename** a chat from the link next to its title.
+  - Replies are capped at 1,024 output tokens. Your whole conversation is resent with
+    each message, so long chats cost more per reply.
+  - The chat pages don't show costs. If the model fails to answer, your draft is put
+    back in the box and nothing is charged.
+  - The chat pages also work with JavaScript turned off: sending then reloads the page.
+- **My Profile · $X.XX** (in the nav bar when logged in) shows your available credit,
+  which updates after every reply. The profile page shows:
+  - your available credit, and totals (credit added, spent, balance)
+  - what each chat cost, expandable to the cost and tokens of each reply
+  - the credit you've been given (sign-up credit, top-ups)
+
   Each reply is charged its actual cost. When your balance reaches $0.00 or less,
   sending is blocked until an admin tops you up. The last reply can take the balance
-  slightly below zero. If the model fails to answer, nothing is charged.
+  slightly below zero. The old `/credit/` address redirects to `/profile/`.
 - **Admin** (staff only) is at `/admin/`:
   - *Credit transactions → Add* tops up a user. Enter the amount in dollars. The
     ledger is append-only: use an *adjustment* (which may be negative) to correct a
