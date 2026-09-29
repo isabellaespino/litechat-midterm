@@ -38,6 +38,10 @@
     .badge { display: inline-block; font-size: .75rem; padding: 1px 8px; border-radius: 999px; background: #eef3e8; color: #3b6d11; text-transform: capitalize; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+    .balance { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .totals { max-width: 360px; }
+    .usage-chat summary { cursor: pointer; }
+    .usage-chat .chat-cost { float: right; font-variant-numeric: tabular-nums; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   </style>
 </head>
@@ -53,7 +57,7 @@
     <span class="spacer"></span>
     {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
     {% if user.is_authenticated %}
-      <a class="credit" href="{% url 'credit' %}">Available credit: {{ available_credit_micros|dollars }}</a>
+      <a class="credit" href="{% url 'profile' %}">My Profile · <span data-nav-balance>{{ available_credit_micros|dollars }}</span></a>
       <span class="muted">Hi, {{ user.username }}</span>
       <form method="post" action="{% url 'logout' %}">
         {% csrf_token %}

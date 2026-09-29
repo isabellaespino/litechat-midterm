@@ -288,8 +288,8 @@ class ChatViewTests(TestCase):
         self.assertEqual(self.start_chat().status_code, 302)
         self.assertEqual(self.balance(), 1 - 1_100)
         self.assertEqual(self.start_chat().status_code, 402)
-        page = self.client.get(reverse("chat_list"))
-        self.assertContains(page, "Available credit: -$0.01")
+        page = self.client.get(reverse("home"))
+        self.assertContains(page, "<span data-nav-balance>-$0.01</span>", html=True)
 
     def test_invalid_input_is_400_without_proxy_call(self, post):
         too_long = "x" * 8001
