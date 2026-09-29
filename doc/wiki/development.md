@@ -31,16 +31,16 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 
 ## Tests
 
-`python manage.py test` runs 175 tests (at loop 6):
+`python manage.py test` runs 202 tests (at loop 7):
 
 | File | Tests | Covers |
 |---|---|---|
 | `config/tests.py` | 18 | the money helpers (rounding, negatives, conversion); `BrandTests` (no rendered page says "Litechat", the Chat4All titles, nav and admin header, the script's title); `ContrastTests` (the WCAG ratio of 22 palette pairs ≥ 4.5, parsed from `base.html`, and gold text only on navy); `EstimateTests`; `LandingPageTests` (hero, CTA for logged-out and logged-in users, steps, snapshot values, the snapshot following catalog edits, the theme only on `/`) |
-| `accounts/tests.py` | 19 | sign-up, log-in and log-out status codes and behavior, including the 400s; `AuthCardTests` (headings, a label per input, one full-width button, cross-links, no social login, errors in the card); the Global System Prompt form (save, strip, clear, 400 over 4,000 characters, 405, anonymous, admin inline) |
+| `accounts/tests.py` | 25 | sign-up, log-in and log-out status codes and behavior, including the 400s; `AuthCardTests` (headings, a label per input, one full-width button, cross-links, no social login, errors in the card); the Global System Prompt form; `MemoryTests` (add, list, "N of 10", the 400s for empty, too long, 11th and duplicate, immediate owner-only delete, 405, `system_text_for` composition, the per-message estimate numbers, the admin inline) (save, strip, clear, 400 over 4,000 characters, 405, anonymous, admin inline) |
 | `catalog/tests.py` | 7 | `/models/` grouping and inactive hiding; dollar↔µ$ in the admin form; the seed command's idempotence |
 | `billing/tests.py` | 22 | sign-up credit for every creation path; the ledger invariant; `str()` in dollars; admin top-ups, adjustments and dollar display; append-only 403s; read-only wallets; **My Profile** (usage by chat and reply, totals, pagination, bounded queries, the `/credit/` 301, the nav "My Profile · $X.XX") |
-| `llm/tests.py` | 31 | `ProxyErrorMappingTests` runs the **same** checks for every row of `PROVIDER_CASES` (OpenAI, Anthropic, Google): 502/503 mapping, timeouts and connection errors, malformed bodies, a 120 s timeout, and a missing key → 503 with no request. It also covers per-adapter request shape, the system prompt present or absent, parsing, usage and stop mapping, and estimates; Anthropic block joining, cache tokens and same-role merging; Google roles, `systemInstruction`, thinking tokens and safety blocks; dispatch; and the no-network guard. |
-| `chat/tests.py` | 78 | everything from loop 3 (form and JSON modes, the sidebar, bubbles, no costs, renaming, the script hooks). **Loop 5:** `MarkdownRenderingTests` and `MarkdownInChatTests` (a 14-payload XSS corpus, parsed, through the renderer, the page and both JSON fragments; features; stored raw; user text not rendered); `DeleteChatTests` (confirmation page, access rules, charges kept and balance unchanged, redirect after delete, the "Deleted chats" line reconciling, the in-flight race in both modes, and the backstop path); `SidebarDateTests` (`<time>` markup, bump on send but not on rename, JSON fragments, script hooks). From loop 4: `AllProvidersChatTests`: for **each** model, its own price in both modes, history resent in its format, 402 before the proxy, 502/503 with nothing charged, a missing key affecting only that provider, a Google safety block, and the three-model picker. Also `GlobalSystemPromptTests`: the prompt in each provider's format, left out when blank, never another user's, read at send time, and charging and 402 unchanged. |
+| `llm/tests.py` | 34 | `ProxyErrorMappingTests` runs the **same** checks for every row of `PROVIDER_CASES` (OpenAI, Anthropic, Google): 502/503 mapping, timeouts and connection errors, malformed bodies, a 120 s timeout, and a missing key → 503 with no request. It also covers per-adapter request shape, the system prompt present or absent, parsing, usage and stop mapping, and estimates; Anthropic block joining, cache tokens and same-role merging; Google roles, `systemInstruction`, thinking tokens and safety blocks; dispatch; and the no-network guard; `PerCallLimitsTests` (defaults of 1,024 / 120, and overrides reaching every provider's cap field and the timeout). |
+| `chat/tests.py` | 96 | everything from loop 3 (form and JSON modes, the sidebar, bubbles, no costs, renaming, the script hooks). **Loop 5:** `MarkdownRenderingTests` and `MarkdownInChatTests` (a 14-payload XSS corpus, parsed, through the renderer, the page and both JSON fragments; features; stored raw; user text not rendered); `DeleteChatTests` (confirmation page, access rules, charges kept and balance unchanged, redirect after delete, the "Deleted chats" line reconciling, the in-flight race in both modes, and the backstop path); `SidebarDateTests` (`<time>` markup, bump on send but not on rename, JSON fragments, script hooks). From loop 4: `AllProvidersChatTests`: for **each** model, its own price in both modes, history resent in its format, 402 before the proxy, 502/503 with nothing charged, a missing key affecting only that provider, a Google safety block, and the three-model picker. Also `GlobalSystemPromptTests`: the prompt in each provider's format, left out when blank, never another user's, read at send time, and charging and 402 unchanged. |
 
 ### The LLM proxy is never called from tests
 
@@ -119,6 +119,27 @@ browser at the verify step.
   - screenshots of every page, reviewed
 
   See [Visual design → checking visuals](design.md#checking-visuals).
+
+- **Loop 7's checks:**
+  - **Real proxy** (throwaway DB, 9/9 calls): each model's first reply, then its title
+    ("Budget Three Day Rome Trip"). Each title's logged app cost matched the formula,
+    and **the user's balance and ledger were unchanged** by every title call. All three
+    providers accepted the Global System Prompt plus memories and followed "Always answer
+    in exactly one sentence."
+  - **Browser (16/16, plus 4/4 for the layout fix):**
+    - the first-line title, then the automatic title swapping in with no reload
+    - "Spent" rising by exactly the reply's cost, with no title cost on My Profile
+    - adding, listing, deleting and rejecting a 201-character memory
+  - **Admin:** the only staff account in the dev DB is the owner's, so "Title
+    generations (app cost)" was rendered in-process with `RequestFactory` as that user
+    (read-only, no login or session written) rather than by creating another admin.
+  - **Screenshots** caught a loop 3 layout bug: My Profile's per-chat totals floated
+    into the middle of the details line at phone width. It's fixed in its own commit.
+  - The chat tests gained `AutoTitleTests` (each provider; free and invisible; regardless
+    of balance; failure, unusable, rename and delete races; double requests; escaping;
+    script hooks), `CleanTitleTests`, `TitleGenerationAdminTests` and
+    `MemoriesInChatTests` (each provider's system field, prompt then memories, send-time
+    reads, isolation, never in title calls).
 
 ### Date formatting under Node
 

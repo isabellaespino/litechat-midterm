@@ -6,7 +6,10 @@ Accounts use Django's built-in `auth.User`. There's no custom user model. Per-us
 preferences live in **`accounts.UserSettings`**, a one-to-one to the user (related name
 `chat_settings`) created on first use by `accounts.services.get_settings()`. Today it
 holds one preference, the **Global System Prompt**; see
-[billing → Global System Prompt](billing.md#global-system-prompt).
+[billing → Global System Prompt](billing.md#global-system-prompt). **`accounts.Memory`**
+holds the user's notes (up to 10 × 200 characters); see
+[billing → Memories](billing.md#memories). `accounts.services.system_text_for(user)`
+combines the two into the system text sent with every message.
 
 - **Log-in and sign-up pages** are centered cards ("Welcome back" / "Welcome to
   Chat4All"), with labeled fields, one full-width button, a link to the other page, and
@@ -64,6 +67,10 @@ enhancement script, and every page works without it.
 | Chat delete confirmation page | 200. The delete POST → 302 to `/chats/`. |
 | Sending to a chat that was deleted while its reply was in flight | **404** (the reply is still charged) |
 | Saving a system prompt over 4,000 characters | **400**, My Profile re-rendered with the error |
+| Adding a memory that's empty, over 200 characters, an 11th, or a duplicate | **400**, My Profile re-rendered with the error and the draft |
+| Adding or deleting a memory | 302 to `/profile/#memories` |
+| Deleting another user's memory | 404 |
+| Automatic title request (`POST /chats/<id>/title/`) | 200 / 409 / 502 / 503 / 404 / 401 / 405 (see [chat → Automatic titles](chat.md#automatic-titles)) |
 | Another user's chat, unknown chat, unknown URL | 404 |
 | Invalid **Django admin** form | 200. See [Product decisions → Departures from the plan](product-decisions.md#departures-from-the-plan). |
 | Changing or deleting a ledger entry in admin; adding, changing or deleting a conversation in admin | 403 |

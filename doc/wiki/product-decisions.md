@@ -31,6 +31,11 @@ Everything else makes that core easier to use, but isn't the core itself:
 - the chatbot layout (sidebar, bubbles, Enter to send, no reload)
 - Markdown rendering
 - the Global System Prompt
+- **Memories:** up to 10 short notes about the user, sent with the Global System Prompt
+  in every chat (loop 7; [billing → Memories](billing.md#memories))
+- **Automatic chat titles:** after the first reply, a short title from the chat's own
+  model. It's **free to users**, and the cost is recorded for admins only (loop 7;
+  [chat → Automatic titles](chat.md#automatic-titles))
 - the landing page with its price snapshot
 
 ## Out of scope
@@ -39,6 +44,7 @@ Everything else makes that core easier to use, but isn't the core itself:
 |---|---|
 | **Web search** | The proxy's docs state that **hosted search is unavailable** ("Hosted search and code execution are unavailable", on the OpenAI Responses page). Adding it would need a separate search service and API key, a way to pass results to three different providers, and a price for searches on top of token charges. That's a new paid dependency outside the brief's core. |
 | **File uploads** | The proxy's file APIs keep files **private to the proxy account** (ours, shared by every user), **expire them after one hour**, and cap them at 64 MiB per file and 100 files / 256 MiB per account and provider. Supporting uploads would mean our own per-user storage and clean-up, size limits, and handling for the file tokens each provider bills (large documents can cost far more than a chat message), all to work around a one-hour, shared-quota store. The core, pay-per-use chat across providers, doesn't need it. |
+| **Thinking effort** (deferred, not rejected) | The proxy supports a reasoning setting on all three interfaces: OpenAI `reasoning_effort`, Anthropic `thinking`, and Google `thinkingConfig.thinkingBudget`. Chat4All currently turns it **off** on every request. **Thinking tokens are billed as output**, so enabling it can multiply a reply's cost with tokens the user never sees in the answer. Google already reports them as `thoughtsTokenCount`, which we charge as output. Offering it needs a product decision on **how to show and bill that cost**: for example showing thinking tokens separately on My Profile, a per-chat setting with a cost warning, or a thinking-token cap. **Memories were prioritized instead** for loop 7. |
 | **Organization billing accounts** | The brief is about **regular individual users**. Shared balances would need organizations, membership and roles, per-member usage and limits, and rules for who can top up or see what. That's a different product (team billing) with its own ledger design. It was recorded as out of scope in the first study (§9, and decisions log §10 #6), and everything here keeps one wallet per user. |
 
 ## The credit system
@@ -271,6 +277,53 @@ See [Visual design](design.md).
 - Readability was a hard requirement, so contrast is enforced by tests (22 pairs, all
   ≥ 4.5:1) and audited in the browser, not judged by eye.
 
+### 13. Automatic chat titles, free to users
+
+**Decision** (loop 7, study §2 and decisions §4 #1–4):
+- After a new chat's first reply, a **separate request** asks **the chat's own model**
+  for a 3–6-word title, with a 20-token cap and a 20 s timeout.
+- **The app pays.** The user's wallet and ledger are never touched, and nothing appears
+  on My Profile, in the credit history or in the nav. Each attempt's tokens and cost are
+  recorded in an **admin-only** log.
+- **Every new chat gets an attempt, regardless of balance.**
+- If the call fails or returns nothing usable, the first-line title stays, with no retry
+  and no charge. A rename always wins.
+
+**Why.**
+- **A separate request** keeps the first reply exactly as fast as before. This proxy has
+  taken up to 85 s, and a slow or failed title must never delay or endanger a reply that
+  already succeeded.
+- **The chat's own model** means no provider sees content the user didn't send to it.
+  Picking the cheapest model would send a Claude chat to Google to save a fraction of a
+  hundredth of a cent.
+- **Free and invisible:** titles are something the app does, not something the user
+  asked for. Keeping them out of the ledger keeps "Spent" a pure record of the user's
+  own replies, with every reconciliation intact. The admin log keeps the real cost
+  visible to the operator: about 10% of a first reply, once per chat, and 161–517 µ$ in
+  the real check.
+
+### 14. Memories, capped because they're billed on every message
+
+**Decision** (loop 7, study §3 and decisions §4 #5–6):
+- Users keep **up to 10 notes of at most 200 characters** on My Profile.
+- They're sent after the Global System Prompt, to every model in every chat, and never
+  with title calls.
+- Deleting one is immediate, with no confirmation.
+- My Profile shows an **estimate** of what the prompt and memories add to every message.
+- Only the user adds memories.
+
+**Why.**
+- Memories let a user say once "I'm a student" or "keep answers short" instead of in
+  every chat.
+- Every character rides along as input tokens on **every** message, so the caps bound
+  the cost: at the limit, about 512 tokens, or roughly $0.0005 per Claude Haiku message.
+  The estimate on My Profile makes that visible rather than hidden.
+- 200 characters fits a real sentence.
+- A memory is one line that's easy to re-add, so a confirmation page for deleting would
+  be friction without protection.
+- AI-generated memories are out of scope. They'd need consent and review rules for what
+  a model writes about a user.
+
 ## Rejected alternatives
 
 | Alternative | Why we rejected it |
@@ -299,6 +352,12 @@ See [Visual design](design.md).
 | Provider logos, or real superhero imagery on the landing page | These are trademarks and copyrighted characters. Providers are named in text, and the emblem is an original shield drawn in inline SVG. |
 | Hard-coding the price snapshot, or computing it with a separate formula | It would drift from the catalog and from real charges. The snapshot reads active models from the catalog and uses `reply_cost_micros`, so an admin price edit changes it immediately. |
 | Gold as a text color on light backgrounds | About 1.9:1 on white, which is unreadable. Gold is text only on navy, and a test enforces this. |
+| Generating the title inside the first send | It adds a full proxy round trip (up to 85 s here) to every new chat's first reply, and a title failure could endanger a reply that succeeded. |
+| A background thread or task queue for titles | No task queue exists. Celery would be a new dependency and service, and threads in the WSGI dev server aren't durable. A second request from the script does the same job. |
+| Titling with the cheapest model | It sends the user's first message to a provider they didn't choose, to save a fraction of a hundredth of a cent. |
+| Charging users for titles, or folding the cost into the first reply | Titles weren't requested by the user (decision #1). Folding the cost in would make a reply's cost stop matching its reported tokens. The app pays, and admins see the cost. |
+| Retrying failed titles automatically | It hides costs and adds load against an unreliable proxy for a nicety. One attempt, then the first-line title stays, and the user can rename. |
+| Unlimited memories, or editing memories in place | Every memory is billed on every message, so there's a cap. Delete and re-add is simpler than an edit flow for one-line notes. |
 | Showing costs on the chat pages | Chat pages should feel like a chatbot, not a meter. Costs moved to My Profile, and the nav keeps the balance visible (redesign §10 #1). |
 
 ## Departures from the plan
@@ -472,4 +531,34 @@ its five commits, with no follow-up fix. The code differs from it in these place
    confirmed the focus ring and where the CTA leads. Screenshots of every page were
    reviewed. There were no proxy calls and no dev-database changes beyond `uitest`
    logging in.
+
+### Loop 7
+
+The loop 7 plan (`doc/plan/1790687240-loop7-auto-titles-memories.md`) was followed in its
+five commits, plus one follow-up fix. Decision #1 had already overridden the study's
+recommendation (app-paid titles, admin-only cost, no ledger kind) before planning. The
+code differs from the plan in these places:
+
+1. **Three migrations, not two.** `chat.0002_title_generation` (the admin cost log) and
+   `chat.0003_title_source` landed in separate commits, as did `accounts.0002_memory`.
+   `title_source` defaults to `user`, so all 12 existing dev-database chats became
+   `user` and will never be retitled.
+2. **A test moved to the later step.** Step 3's title test originally set a memory, but
+   `Memory` only exists from Step 4. "The title call never carries memories" is covered
+   by `MemoriesInChatTests.test_title_call_never_carries_memories`.
+3. **Two test corrections, not app changes.** A helper found the new chat by title
+   prefix, which failed on messages with repeated spaces because titles collapse them;
+   it now takes the newest chat. And one hand-counted character total in the estimate
+   test was off by one, so its expected values and comment were corrected (50 + 1 + 2 +
+   150 = 203 characters → 51 tokens).
+4. **A loop 3 layout bug fixed** (`fix: keep My Profile chat totals on their own line on
+   phones`). The floated per-chat total landed in the middle of the wrapped details line
+   at 375px. Loop 7's screenshots caught it; no assertion had.
+5. **The admin list was checked without logging in as the owner.** The dev database's
+   only staff account is the owner's, so the admin cost list was rendered in-process with
+   `RequestFactory` as that user, read-only with no session, rather than creating another
+   admin.
+6. **Verification:** 9/9 real proxy calls (titles for all three models, each app cost
+   matching the formula, the user's balance and ledger unchanged; memories followed by
+   all three), and the browser check passed 16/16, plus 4/4 for the layout fix.
 

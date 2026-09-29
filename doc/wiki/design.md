@@ -65,6 +65,11 @@ properties on `:root`, and page rules only use `var(--…)`.
   a gold left border. The × turns red on hover.
 - **Bubbles:** the user's are navy with white text, the model's are white.
 - **Tables:** headers are navy-tinted, and tier badges are gold-soft.
+- **My Profile's per-chat totals** are right-aligned on desktop. At 720px and below they
+  sit on their own line under the chat title, because a float there landed mid-sentence
+  (fixed in loop 7).
+- **Memories** (loop 7) are a list of notes with navy **Delete** buttons (`.btn.secondary
+  .small`) and a single-line Add form with a gold **Add** button.
 
 ## Landing page (`/`)
 

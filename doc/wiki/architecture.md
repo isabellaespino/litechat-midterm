@@ -20,14 +20,17 @@ config/        project package: settings, root URLs (and the Chat4All admin head
   views.py       the landing page (home), with the price snapshot
   tests.py       landing, estimates, brand (no "Litechat"), contrast, and money tests
 accounts/      sign-up form and view; log-in view that returns 400 on bad credentials;
-               UserSettings (the Global System Prompt), its save view and admin inline
+               UserSettings (the Global System Prompt) and Memory, their views,
+               services.system_text_for (prompt + memories), and admin inlines
 catalog/       LLMModel, its admin, the /models/ page, the `seed` command,
                estimates.py (messages-per-budget estimates for the landing page),
                and the `money` template filters (templatetags/money.py)
 billing/       Wallet, CreditTransaction, services.py (the only balance writer, plus
                reply_cost_micros), the sign-up credit signal, the nav context
                processor, the My Profile page (/profile/), admin
-chat/          Conversation, Message, services.py (send_message, ConversationDeleted),
+chat/          Conversation (with title_source), Message, TitleGeneration (admin-only
+               app-cost log), titles.py (automatic titles), services.py (send_message,
+               ConversationDeleted),
                markdown.py (render_markdown: markdown-it-py + nh3), templatetags/
                chat_markdown.py (the `markdown` filter), forms, views (form + JSON
                modes, rename, delete), admin
@@ -49,8 +52,9 @@ doc/           study/, plan/, wiki/ (this manual)
 ```
 
 **Dependencies between apps:**
-- `chat` depends on `llm` (to get replies), `billing` (to charge), `catalog` (the
-  model) and `accounts` (the user's system prompt, read at send time).
+- `chat` depends on `llm` (to get replies and titles), `billing` (to charge replies, and
+  `reply_cost_micros` for the title cost log), `catalog` (the model) and `accounts` (the
+  system text, prompt plus memories, read at send time).
 - `accounts.views.system_prompt` reuses `billing.views.render_profile` to re-show My
   Profile with a 400. `billing/admin.py` adds `accounts.admin.UserSettingsInline` to the
   user admin.
@@ -74,7 +78,8 @@ doc/           study/, plan/, wiki/ (this manual)
 | `LLM_TIMEOUT_SECONDS` | `120` (study §10 #12: the proxy's response time varies, and a slow reply beats a failed one) |
 | `CHAT_PROVIDERS` | `["openai", "anthropic", "google"]`: providers whose models can be picked in chat (each needs an adapter in `llm.PROVIDERS`) |
 | `CHAT_MESSAGE_MAX_CHARS` | `8000` |
-| `MAX_OUTPUT_TOKENS` | `1024`, sent as `max_tokens` on every request |
+| `MAX_OUTPUT_TOKENS` | `1024`, sent as each reply's output cap |
+| `TITLE_MAX_OUTPUT_TOKENS` / `TITLE_TIMEOUT_SECONDS` | `20` / `20`: the automatic title call's cap and timeout (replies keep 1,024 and 120) |
 | `SIGNUP_CREDIT_MICROS` | `2_000_000` ($2.00) |
 | `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` | `login` / `home` / `home` |
 | Context processors | Django defaults, plus `billing.context_processors.available_credit` |
@@ -99,6 +104,9 @@ variable with no values.
 | `/chats/new/` | `chat_new` | `chat.views.chat_new` (GET page, POST starts a chat; form or JSON) | logged in |
 | `/chats/<id>/` | `chat_detail` | `chat.views.chat_detail` (GET page, POST sends; form or JSON) | logged in, owner only (404 otherwise) |
 | `/chats/<id>/rename/` | `chat_rename` | `chat.views.chat_rename` (POST only) | logged in, owner only |
+| `/chats/<id>/title/` | `chat_title` | `chat.views.chat_title` (POST, JSON only: automatic title) | logged in, owner only |
+| `/profile/memories/` | `memory_add` | `accounts.views.memory_add` (POST only) | logged in |
+| `/profile/memories/<id>/delete/` | `memory_delete` | `accounts.views.memory_delete` (POST only, immediate) | logged in, owner only |
 | `/chats/<id>/delete/` | `chat_delete` | `chat.views.chat_delete` (GET confirmation page, POST delete; other methods → 405) | logged in, owner only |
 | `/admin/` | `admin:*` | Django admin | staff |
 

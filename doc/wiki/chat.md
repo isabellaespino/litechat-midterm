@@ -28,7 +28,16 @@ Design sources: `doc/study/1790662970-chatbot-ui-redesign.md`,
 **`Conversation`**
 
 - `owner` (FK to User)
-- `title` (default "New chat", set from the first message, renamable)
+- `title` (default "New chat"). It starts as the first line of the first message, is
+  replaced by an [automatic title](#automatic-titles) after the first reply, and is
+  renamable.
+- `title_source`, which records where the title came from:
+  - `provisional`: the first line, waiting for an automatic title
+  - `generating`: a title request has claimed it
+  - `auto`: the automatic title was saved
+  - `user`: set by a rename, **and the default for chats created before loop 7**, so
+    those are never retitled
+  - `failed`: the title call failed or returned nothing usable; no retry
 - `llm_model` (FK to `catalog.LLMModel`, **PROTECT**, so a model with chats can't be
   deleted; deactivate it instead)
 - `created_at`, `updated_at`
@@ -61,9 +70,10 @@ Assistant replies also store:
 
 1. Build `messages` from `history_for(conversation)` (every stored message, in order,
    as `{"role", "content"}`) plus the new user message.
-2. Read the user's Global System Prompt at send time (`accounts.services.system_prompt_for`,
-   which returns `None` when it's blank). Call `llm.complete(llm_model, messages,
-   system=…)` **outside any transaction**. It can take up
+2. Build the system text at send time with `accounts.services.system_text_for(user)`: the
+   Global System Prompt, then the user's [Memories](billing.md#memories). It's `None`
+   when neither is set. Call `llm.complete(llm_model, messages, system=…)` **outside any
+   transaction**. It can take up
    to 120 seconds, and holding a SQLite write lock that long would block everyone. If it
    raises `LLMError`, the error propagates and **nothing is saved or charged**.
 3. Compute the cost with `billing.services.reply_cost_micros()`. See
@@ -108,6 +118,7 @@ every chat.
 | `/chats/<id>/` (`chat_detail`) | The thread, with a fixed **model label** (a chip) in the message box instead of a picker (redesign §10 #2). Only the owner can open it; anyone else gets 404. |
 | `/chats/<id>/rename/` (`chat_rename`) | POST only (GET → 405). See [Renaming](#renaming). |
 | `/chats/<id>/delete/` (`chat_delete`) | GET: the confirmation page. POST: delete. See [Deleting a chat](#deleting-a-chat). |
+| `/chats/<id>/title/` (`chat_title`) | POST, JSON only, called by the script. See [Automatic titles](#automatic-titles). |
 
 Templates (`templates/chat/`), all rendered on the server:
 
@@ -206,6 +217,12 @@ the script, every form still works with a normal POST and page reload.
   - 402 keeps the composer disabled, links to My Profile, and updates the nav balance.
   - 401 links to log-in.
   - Non-JSON or network failures show "Something went wrong. Please try again."
+- **Automatic title:** `requestTitle(chat_url)` runs after a new chat's first reply (the
+  `main_html` branch), and **on load** when the header has
+  `data-title-source="provisional"`. It sends a background POST with `X-CSRFToken`. On
+  `changed: true`, while still on that chat, it updates the header, the rename box,
+  `document.title` and the sidebars. **Every other status is ignored silently, and it
+  never touches the nav balance.**
 - **`popstate`** (back/forward after `pushState`) reloads the page.
 - Model output reaches the page only as HTML rendered and escaped by the server. The
   script never builds HTML from it.
@@ -223,6 +240,71 @@ without the script:
 
 It saves with `QuerySet.update()`, so `updated_at` is unchanged and **renaming doesn't
 reorder the sidebar** or change its date.
+
+## Automatic titles
+
+Loop 7, study `doc/study/1790686669-loop7-auto-titles-memories.md` §2 and decisions §4.
+After a new chat's first reply, the chat is renamed with a short title written by **the
+chat's own model**.
+
+- **Timing:** the first send is **unchanged**. It saves the provisional first-line title
+  (`title_from`) with `title_source="provisional"` and returns as fast as before. The
+  title comes from a **separate request** that the script fires right after. So the
+  first reply never waits for it, and a slow or failed title can't hurt the reply.
+- **Without JavaScript**, the first-line title stays. If the chat is later opened with
+  JavaScript, it gets one attempt then.
+- **The call** (`chat/titles.py`, `generate_title`):
+  1. **Claim:** `filter(title_source="provisional").update(title_source="generating")`.
+     If no row changed, it returns "conflict" with **no proxy call**, so only one request
+     ever titles a chat.
+  2. `llm.complete(model, [one user message], system=None, max_output_tokens=20,
+     timeout=20)`, **outside any transaction**. The message is a fixed instruction
+     ("Write a short title (3 to 6 words)… Use the conversation's language.") plus the
+     first message and first reply, each truncated to 1,000 characters. **No Global
+     System Prompt and no memories** are sent.
+  3. `clean_title()` keeps the first line, strips quotes, Markdown marks and a
+     "Title:" prefix, collapses spaces, drops a trailing `.:;`, and caps at 60
+     characters with `…`. It returns `""` for nothing usable ("", ".", "Title",
+     "untitled", …).
+  4. In one transaction:
+     - if the chat was deleted → `chat_deleted`
+     - otherwise it saves with `filter(title_source="generating").update(title=…,
+       title_source="auto")`
+     - an unusable answer → `failed`, keeping the first-line title
+     - 0 rows updated means a **rename won** → `superseded`
+
+     `update()` means the title never bumps `updated_at`, so the sidebar doesn't
+     reorder.
+- **Free and invisible to users** (decision #1):
+  - The app pays. **Nothing touches the user's wallet or ledger.** The response has no
+    `balance`, and the title's cost appears nowhere users look: not My Profile, the
+    credit history, the chat page or the nav.
+  - "Spent" stays replies-only, and every reconciliation still holds.
+  - It's attempted **regardless of balance**, even at $0 or below.
+- **Admin-only cost log:** `chat.TitleGeneration`, one row per attempt. It records the
+  chat (`SET_NULL`), user, model, status (`ok`, `unusable`, `superseded`,
+  `chat_deleted`, `failed`), the title, tokens, a price snapshot, `cost_micros` (from
+  `reply_cost_micros`, the same formula as charges) and `error_status`. A claim conflict
+  makes no call and writes no row.
+- **Admin:** "Title generations (app cost)" is read-only, with the total cost of the
+  rows shown in the heading, and filters by status and model.
+- **Endpoint** `POST /chats/<id>/title/` (`chat_login_required`, `require_POST`, **not**
+  balance-gated):
+
+  | Result | Status |
+  |---|---|
+  | title saved | 200 `{"changed": true, "title", "sidebar_html"}` |
+  | unusable answer | 200 `{"changed": false, "title": <first-line title>}` |
+  | not provisional (renamed, already titled, generating, or failed before) | 409 |
+  | proxy failure | 502 / 503 (the `LLMError` status) |
+  | chat deleted during the call, another user's chat, or unknown | 404 |
+  | logged out (JSON) | 401 |
+  | GET | 405 |
+
+  A POST without a CSRF token (e.g. from `curl`) gets Django's 403 before the view.
+- **Measured in loop 7's real check:** titles took 1.4–5.2 s after the first reply.
+  They cost the app 161–517 µ$ each for about 500 input tokens (the replies were long),
+  within the study's worst case.
 
 ## Deleting a chat
 
@@ -341,6 +423,11 @@ proxy, and it runs only on the backend.
 "content"}` dicts. Each adapter translates it to its provider's format. `system` is the
 user's [Global System Prompt](billing.md#global-system-prompt), or `None`.
 
+**Per-call limits:** `llm.complete(…, max_output_tokens=None, timeout=None)` passes both
+down to every adapter. `max_output_tokens` sets each provider's cap field, and `timeout`
+goes to `http.post_json`. The defaults are the reply settings (1,024 tokens, 120 s).
+Automatic titles pass `TITLE_MAX_OUTPUT_TOKENS = 20` and `TITLE_TIMEOUT_SECONDS = 20`.
+
 ### Provider contracts
 
 | | OpenAI | Anthropic | Google |
@@ -396,3 +483,4 @@ From https://proxy.litechat.ai/docs, plus what we've observed:
   detail page has a read-only message inline with role, content, tokens, cost ($) and
   stop reason. There's no add, change or delete.
 - **Ledger:** `charge` rows have a "Chat" column that links to the conversation.
+- **Title generations (app cost):** described in [Automatic titles](#automatic-titles).

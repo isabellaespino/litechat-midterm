@@ -183,9 +183,10 @@ though it isn't about money, because My Profile is the user's settings page.
     `billing.views.render_profile(status=400, system_prompt_form=form)`, and nothing
     saved.
   - GET → 405. Logged out → 302 to log-in.
-- **Sending:** `chat.services.send_message` reads it **at send time**
-  (`system_prompt_for(user)`, which strips it and returns `None` when blank), and passes
-  it to `llm.complete(..., system=…)`.
+- **Sending:** `chat.services.send_message` reads it **at send time**, as the first part
+  of `system_text_for(user)`, which is followed by the user's [Memories](#memories).
+  `system_prompt_for(user)` strips it and returns `None` when blank. The result goes to
+  `llm.complete(..., system=…)`.
   - Each adapter puts it in its provider's field (see
     [chat → provider contracts](chat.md#provider-contracts)).
   - With `None`, **no system field or message is sent at all**.
@@ -200,3 +201,55 @@ though it isn't about money, because My Profile is the user's settings page.
 - **Admin:** a read-only "Global System Prompt" inline on each user's admin page, for
   support.
 
+## Memories
+
+Loop 7 (study §3, decisions §4 #5–6). These are short notes about the user, like "I'm a
+student" or "keep answers short", sent with the Global System Prompt **to every model in
+every chat**. Only the user adds them; AI-generated memories are out of scope.
+
+- **Storage:** `accounts.Memory` has `user` (CASCADE, `related_name="memories"`), `text`
+  (at most **200** characters) and `created_at`, ordered oldest first. A user keeps **at
+  most 10** (`MEMORY_MAX_COUNT`, `MEMORY_MAX_CHARS`).
+- **My Profile** (`id="memories"`, right after the Global System Prompt) shows:
+  - "Memories N of 10", the help text, and the list with a **Delete** button per note
+  - a single-line **Add** form, replaced at 10 by "Delete a memory to add another."
+- **Adding:** `POST /profile/memories/` (`memory_add`).
+  - Valid → 302 to `/profile/#memories`, with "Memory added."
+  - **400**, with the full My Profile re-rendered and the draft kept, for: empty or
+    whitespace-only, over 200 characters, an 11th memory ("You can keep up to 10
+    memories. Delete one to add another."), or a case-insensitive duplicate ("You already
+    have that memory.").
+- **Deleting:** `POST /profile/memories/<id>/delete/` (`memory_delete`) deletes
+  **immediately, with no confirmation**, then shows "Memory deleted." Another user's
+  memory → 404. Both endpoints are POST only (GET → 405) and need login.
+- **How they're sent:** `accounts.services.system_text_for(user)` builds:
+
+  ```
+  <Global System Prompt, if set>
+
+  About the user (notes they asked you to remember):
+  - I'm a student
+  - keep answers short
+  ```
+
+  - With only one part set, the result is just that part. With neither, it's `None`, so
+    there's no system field.
+  - It's read at send time, so a change affects the next message in every chat.
+  - It's never stored on messages and **never sent with automatic-title calls**.
+  - Another user's memories are never sent, and a test covers this.
+  - In loop 7's real check, all three providers followed "Always answer in exactly one
+    sentence."
+- **Cost estimate** (not a charge): when a prompt or memories exist, My Profile says
+  "Your system prompt and memories add about N tokens to every message (≈ $X with Claude
+  Haiku, …). Estimate." That's `ceil(len(system_text) / 4)` tokens, priced per active
+  model with `reply_cost_micros(N, 0, …)`. At the caps (10 × 200 characters) the memories
+  alone are about 512 tokens, roughly $0.0005 per Claude Haiku message. "Spent" and the
+  other totals are unaffected.
+- **Admin:** a read-only "Memories" inline on each user's admin page.
+
+## Automatic titles never touch the ledger
+
+Title calls after a new chat's first reply are **paid by the app**. There's no
+`CreditTransaction`, no wallet change, and nothing on My Profile or in the credit
+history. Their cost is recorded only in the admin log "Title generations (app cost)"
+(`chat.TitleGeneration`). See [chat → Automatic titles](chat.md#automatic-titles).
