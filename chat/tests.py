@@ -164,7 +164,7 @@ def proxy_status(status):
 
 
 @override_settings(OPENAI_API_KEY="test-key")
-@mock.patch("llm.openai.requests.post")
+@mock.patch("llm.http.requests.post")
 class ChatViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("alice", password=PASSWORD)
@@ -479,7 +479,7 @@ class RenameTests(TestCase):
 
 
 @override_settings(OPENAI_API_KEY="test-key")
-@mock.patch("llm.openai.requests.post")
+@mock.patch("llm.http.requests.post")
 class ChatJsonTests(TestCase):
     """The fetch contract: same checks and statuses as form posts, JSON bodies."""
 

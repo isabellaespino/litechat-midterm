@@ -1,34 +1,22 @@
 """Backend-only clients for the LLM proxy. Browser code never calls the proxy."""
 
-from dataclasses import dataclass
+from . import openai
+from .base import LLMError, LLMReply
+
+__all__ = ["LLMError", "LLMReply", "complete"]
+
+# provider -> complete(api_model_id, messages, system=None)
+PROVIDERS = {
+    "openai": openai.complete,
+}
 
 
-@dataclass
-class LLMReply:
-    text: str
-    input_tokens: int
-    output_tokens: int
-    stop_reason: str
-    usage_estimated: bool = False
+def complete(llm_model, messages, system=None):
+    """Send the conversation to `llm_model` and return its whole reply.
 
-
-class LLMError(Exception):
-    """A failed proxy call.
-
-    `status` is the HTTP status our view should return (502 or 503). `message` is
-    safe to show users: it never contains the API key or the proxy's response body.
+    `system` is the optional system prompt; with None, no system prompt is sent.
     """
-
-    def __init__(self, status, message):
-        super().__init__(message)
-        self.status = status
-        self.message = message
-
-
-def complete(llm_model, messages):
-    """Send the conversation to `llm_model` and return its whole reply."""
-    if llm_model.provider == "openai":
-        from . import openai
-
-        return openai.complete(llm_model.api_model_id, messages)
-    raise LLMError(503, "This model isn't available yet.")
+    adapter = PROVIDERS.get(llm_model.provider)
+    if adapter is None:
+        raise LLMError(503, "This model isn't available yet.")
+    return adapter(llm_model.api_model_id, messages, system=system)
