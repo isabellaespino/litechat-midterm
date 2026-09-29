@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Litechat{% endblock %} · Litechat</title>
+  <style>
+    :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --accent: #0a66c2; --bg: #fafafa; --card: #fff; --error: #b3261e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+    nav .brand { font-weight: 700; color: var(--fg); margin-right: 8px; }
+    nav .spacer { flex: 1; }
+    nav form { margin: 0; }
+    nav button { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+    nav .credit { font-variant-numeric: tabular-nums; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.6rem; margin: 0 0 16px; }
+    h2 { font-size: 1.2rem; margin: 24px 0 8px; }
+    .muted { color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .messages { list-style: none; padding: 0; margin: 0 0 16px; }
+    .messages li { padding: 8px 12px; border-radius: 6px; background: #e8f1fb; margin-bottom: 6px; }
+    .messages li.error { background: #fdecea; color: var(--error); }
+    form p { margin: 0 0 12px; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; }
+    input[type=text], input[type=password] { width: 100%; max-width: 360px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+    .helptext, .helptext ul { color: var(--muted); font-size: .85rem; }
+    .errorlist { color: var(--error); padding-left: 18px; margin: 4px 0; }
+    .btn { display: inline-block; background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font: inherit; cursor: pointer; }
+    .btn:hover { text-decoration: none; opacity: .9; }
+    .badge { display: inline-block; font-size: .75rem; padding: 1px 8px; border-radius: 999px; background: #eef3e8; color: #3b6d11; text-transform: capitalize; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="brand" href="{% url 'home' %}">Litechat</a>
+    <a href="{% url 'home' %}">Home</a>
+    <span class="spacer"></span>
+    {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
+  </nav>
+  <main>
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
