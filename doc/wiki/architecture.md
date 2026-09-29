@@ -3,30 +3,40 @@
 ## Stack
 
 Django 5.2 LTS, SQLite, Django's built-in auth and admin, and server-rendered templates.
-There's no JavaScript and no frontend framework. The dependencies are `Django` and
-`python-dotenv` (see `requirements.txt`). The reasons behind the stack are in the study,
-§3.
+There's no JavaScript and no frontend framework. The dependencies are `Django`,
+`python-dotenv` and `requests` (see `requirements.txt`). The reasons behind the stack
+are in the study, §3, and the reasons for each dependency in §7.
 
 ## Layout
 
 ```
 config/        project package: settings, root URLs, home view, money helpers
   money.py       micro-dollar conversion and formatting (shared by all apps)
+  test_runner.py NoNetworkTestRunner: fails any real HTTP request during tests
   views.py       home page
   tests.py       home page and money helper tests
 accounts/      sign-up form and view; log-in view that returns 400 on bad credentials
 catalog/       LLMModel, its admin, the /models/ page, the `seed` command,
                and the `money` template filters (templatetags/money.py)
-billing/       Wallet, CreditTransaction, services.py (the only balance writer),
-               the sign-up credit signal, the nav context processor, the /credit/ page, admin
-templates/     base.html (nav + CSS), home.html, registration/, catalog/, billing/
+billing/       Wallet, CreditTransaction, services.py (the only balance writer, plus
+               reply_cost_micros), the sign-up credit signal, the nav context
+               processor, the /credit/ page, admin
+chat/          Conversation, Message, services.py (send_message), forms, views, admin
+llm/           plain Python package (not a Django app): the backend-only proxy client
+  __init__.py    LLMReply, LLMError, complete() which dispatches by provider
+  openai.py      the OpenAI Chat Completions adapter
+templates/     base.html (nav + CSS), home.html, registration/, catalog/, billing/, chat/
 doc/           study/, plan/, wiki/ (this manual)
 ```
 
-Dependencies between apps: `billing` and `catalog` both import `config.money`. Every
-template that shows money loads the `money` filter library from `catalog`. `accounts`
-reads `settings.SIGNUP_CREDIT_MICROS` for the sign-up page text. It doesn't import
-`billing`, because the credit itself is granted by a signal.
+**Dependencies between apps:**
+- `chat` depends on `llm` (to get replies), `billing` (to charge) and `catalog` (the
+  model).
+- `billing.CreditTransaction` has a one-to-one link to `chat.Message`, so billing's
+  second migration depends on chat's first.
+- `billing` and `catalog` both import `config.money`, and every template that shows
+  money loads the `money` filters from `catalog`.
+- `accounts` doesn't import `billing`, because the sign-up credit is granted by a signal.
 
 ## Settings (`config/settings.py`)
 
@@ -35,11 +45,17 @@ reads `settings.SIGNUP_CREDIT_MICROS` for the sign-up page text. It doesn't impo
 | `SECRET_KEY` | `DJANGO_SECRET_KEY` from `.env`. Startup fails with `ImproperlyConfigured` if it's missing. |
 | `DEBUG` | `DJANGO_DEBUG`: on if `1`/`true`/`yes`, otherwise off |
 | `ALLOWED_HOSTS` | `DJANGO_ALLOWED_HOSTS`, comma-separated. Defaults to `localhost,127.0.0.1,0.0.0.0` |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` | From `.env`. Loaded, but not used until loop 2. Backend only. |
+| `OPENAI_API_KEY` | From `.env`, backend only. Required to chat. If it's empty, sending returns 503. |
+| `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` | From `.env`. Loaded, but unused until those providers are enabled. |
+| `LLM_PROXY_BASE_URL` | `https://proxy.litechat.ai`. Not a secret, so it isn't in `.env`. |
+| `LLM_TIMEOUT_SECONDS` | `120` (study §10 #12: the proxy's response time varies, and a slow reply beats a failed one) |
+| `CHAT_PROVIDERS` | `["openai"]`: providers whose models can be picked in chat |
+| `CHAT_MESSAGE_MAX_CHARS` | `8000` |
+| `MAX_OUTPUT_TOKENS` | `1024`, sent as `max_tokens` on every request |
 | `SIGNUP_CREDIT_MICROS` | `2_000_000` ($2.00) |
-| `MAX_OUTPUT_TOKENS` | `1024`. Defined for loop 2. Nothing uses it yet. |
 | `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` | `login` / `home` / `home` |
 | Context processors | Django defaults, plus `billing.context_processors.available_credit` |
+| `TEST_RUNNER` | `config.test_runner.NoNetworkTestRunner` |
 
 `.env` is loaded with `load_dotenv(BASE_DIR / ".env")`. `.env.example` lists every
 variable with no values.
@@ -54,6 +70,9 @@ variable with no values.
 | `/accounts/login/` | `login` | `accounts.views.LoginView` | logged out (logged-in users are redirected home) |
 | `/accounts/logout/` | `logout` | Django `LogoutView` | POST only |
 | `/credit/` | `credit` | `billing.views.credit` | logged in |
+| `/chats/` | `chat_list` | `chat.views.chat_list` | logged in |
+| `/chats/new/` | `chat_new` | `chat.views.chat_new` (GET form, POST starts a chat) | logged in |
+| `/chats/<id>/` | `chat_detail` | `chat.views.chat_detail` (GET page, POST sends) | logged in, owner only (404 otherwise) |
 | `/admin/` | `admin:*` | Django admin | staff |
 
 ## Request flow for a logged-in page
@@ -63,3 +82,5 @@ variable with no values.
    which runs `get_or_create`, and adds `available_credit_micros` to every template.
 3. `base.html` renders the nav, including "Available credit: $X.XX", through the
    `dollars` filter.
+
+For what happens when a message is sent, see [Chat → The send flow](chat.md#the-send-flow).

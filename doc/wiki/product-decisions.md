@@ -1,7 +1,7 @@
 # Product decisions
 
 This page explains why the product works the way it does, which alternatives were
-rejected, and where the code departs from the loop 1 plan. The detailed analysis is in
+rejected, and where the code departs from each loop's plan. The detailed analysis is in
 the study (`doc/study/1790657879-litechat-clone-feasibility.md`, §6 and §10).
 
 ## Who it's for
@@ -15,7 +15,8 @@ exactly what you spent, and never be billed for more than you put in.
 ### 1. Prepaid credit, charged per token
 
 **Decision.** Each user has a prepaid US dollar balance, shown as "Available credit"
-(e.g. `$1.99`). From loop 2, each reply is charged by its **actual token usage**:
+(e.g. `$1.99`). Each reply is charged by its **actual token usage**, as reported by the
+proxy:
 `input_tokens × input_price + output_tokens × output_price`, rounded up to the next
 micro-dollar. Sending is blocked when the balance is **$0.00 or less**. A reply that
 costs more than the remaining balance is still charged in full, so the balance can go
@@ -35,8 +36,11 @@ slightly negative.
   ($5.00 per 1M output tokens), that's about half a cent of output per reply.
 - **Micro-dollars** (whole integers, 1 USD = 1,000,000) are needed because one reply
   costs a fraction of a cent. For example, 1,000 input plus 300 output tokens on GPT-5.6
-  Luna costs $0.0011. Integers stay exact under concurrent `F()` updates. Balances are
-  displayed rounded *down* to the cent, so we never overstate what's available.
+  Luna costs $0.0011. Loop 2's real check charged $0.00011 and $0.000114 for two short
+  replies. Integers stay exact under concurrent `F()` updates. Balances are displayed
+  rounded *down* to the cent, so we never overstate what's available.
+- **No charge on failure:** if the proxy errors or times out, the user pays nothing and
+  nothing is saved. Their draft stays in the form, so they can resend.
 
 ### 2. $2.00 sign-up credit
 
@@ -65,24 +69,35 @@ $1.00 / $5.00, GPT-5.6 Luna $0.50 / $2.00, Gemini Flash $0.30 / $2.50.
   usually cost different amounts. A single blended price would overcharge short-answer
   chats and undercharge long answers.
 - Prices live in the database, not in code, so operators can change them, or add
-  models, without a deploy. Each charged message will snapshot the prices it used (loop
-  2), so later price edits don't rewrite history.
+  models, without a deploy. Each charged reply stores a snapshot of the prices it used,
+  so later price edits don't rewrite history.
 
 ### 4. An append-only ledger
 
 **Decision.** Every change to a balance is a `CreditTransaction` row: `signup`,
-`topup`, `charge` or `adjustment`. The wallet balance is updated in the same database
+`topup`, `charge` (linked to the reply it paid for) or `adjustment`. The wallet balance is updated in the same database
 transaction, and never edited directly. In admin, ledger rows can be added but not
 changed or deleted. Mistakes are corrected with an `adjustment`, which may be negative.
 
 **Why.**
-- **Auditability:** every cent can be traced to a reason, a time and (for top-ups) the
-  admin who made it. Users see the same history on `/credit/`.
+- **Auditability:** every cent can be traced to a reason, a time and either the admin
+  who made it (top-ups) or the exact reply it paid for (charges). Users see the same
+  history on `/credit/`.
 - **Correctness:** if admins edited balances directly, an edit made from a stale form
   could silently overwrite a charge that landed in the meantime. Ledger inserts plus
   atomic `F()` increments can't lose updates.
 - **Verifiability:** `balance == sum(ledger)` can always be checked, and it's covered by
   tests.
+
+### 5. Waiting up to 120 seconds for the proxy
+
+**Decision.** `LLM_TIMEOUT_SECONDS = 120` (study §10 #12). It was 60 in the loop 2 plan.
+
+**Why.** The proxy's response time varies widely. In loop 2's real check, one call hit
+the 60-second timeout, and a retry took close to 60 seconds. For the user, a slow reply
+is better than a failed one. A timeout still charges nothing, so the only cost of the
+longer wait is the user's time. The call runs outside any database transaction, so a
+slow reply doesn't block other users.
 
 ## Rejected alternatives
 
@@ -94,14 +109,18 @@ changed or deleted. Mistakes are corrected with an `adjustment`, which may be ne
 | Admins editing the balance directly | No audit trail, and it can lose updates when an admin's save races with a charge (see §4). |
 | Floats or cents for money | Floats drift. Cents can't represent one reply's cost. |
 | Capping each reply to what the balance can afford | Users near $0 would get surprise truncated answers. We chose to charge the actual cost and allow a bounded, slightly negative balance instead. |
+| Saving the user's message when the proxy fails | It would leave an unanswered message in the history, which would then be resent on every later turn. We save nothing and keep the draft in the form instead. |
+| Streaming replies | Needs browser JavaScript and makes billing on disconnect ambiguous. Whole replies keep the pages template-only and charging exact. |
 
 ## Departures from the plan
+
+### Loop 1
 
 The loop 1 plan (`doc/plan/1790659225-loop1-foundation.md`) was followed step by step,
 in seven commits. The code differs from it in these places:
 
 1. **Invalid forms in Django admin return 200. The app's own forms return 400.**
-   - The app's forms (sign-up, log-in, and the chat forms to come) re-render invalid
+   - The app's forms (sign-up, log-in, new chat and send) re-render invalid
      submissions with **400**, following the study's status-code decision.
      `SignUpView.form_invalid` and `LoginView.form_invalid` pass `status=400`.
    - Django admin re-renders an invalid add or change form with **200**. That's how
@@ -127,3 +146,29 @@ in seven commits. The code differs from it in these places:
    smoke test (sign up, top up, and so on) was run by following nav links on a throwaway
    test database, so no test accounts were written to `db.sqlite3`. The live server on
    `0.0.0.0:8000` was checked with GET requests only.
+
+### Loop 2
+
+The loop 2 plan (`doc/plan/1790661385-loop2-openai-chat.md`) was followed in six
+commits, plus one follow-up fix. The code differs from it in these places:
+
+1. **Timeout raised from 60 to 120 seconds** (`fix: raise LLM proxy timeout to 120
+   seconds`). The plan set 60. See decision 5 above.
+2. **The chat list is ordered explicitly.** The plan relied on
+   `Conversation.Meta.ordering`, but Django **ignores `Meta.ordering` on querysets that
+   aggregate** (the list counts and sums messages). A test caught that chats came back
+   in arbitrary order. The view now calls `.order_by("-updated_at", "-id")`. Keep this
+   in mind for any future annotated query.
+3. **The out-of-credit notice shows when the page loads.** The plan only described the
+   notice on a blocked send (402). The chat pages now also show it at $0 or less when
+   first loaded (200), so users learn before typing a message. The 402 on send is
+   unchanged.
+4. **The inactive-model check comes before the balance check.** Sending to a chat whose
+   model was deactivated returns 400 even if the user is also out of credit, because
+   topping up wouldn't help. The plan didn't specify the order.
+5. **`LLMError` takes its status in the constructor** (`LLMError(status, message)`),
+   rather than being set afterwards. There's no behavior change.
+6. **Real-proxy verification ran on a throwaway database.** As in loop 1, the plan's
+   end-to-end check signed up, started a chat, sent two real messages and checked the
+   ledger, all on a temporary test database following nav links. `db.sqlite3` only
+   received the two new migrations.

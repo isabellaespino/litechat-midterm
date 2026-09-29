@@ -16,30 +16,37 @@ Accounts use Django's built-in `auth.User`. There's no custom user model.
 
 ## Navigation (`templates/base.html`)
 
-Every page is reachable from the nav bar:
+Every page is reachable from the nav bar or from a link on another page:
 
-| Who | Links |
+| Who | Nav links |
 |---|---|
 | Everyone | Litechat (brand, links home), Home, Models |
+| Logged in | **Chats** (→ `/chats/`), **New chat** (→ `/chats/new/`), Available credit: $X.XX (→ `/credit/`), "Hi, username", Log out |
 | Logged out | Log in, Sign up |
-| Logged in | Available credit: $X.XX (→ `/credit/`), "Hi, username", Log out |
 | Staff | Admin |
 
-The home page also links to Sign up (when logged out) and to Browse models. The sign-up
-and log-in pages link to each other. Styling is inline CSS in `base.html`. There's no
-JavaScript.
+Other links:
+- **Home page:** Start a chat (logged in) or Sign up (logged out), plus Browse models.
+- **Chats list:** links to each chat.
+- **Chat page:** links back to Chats.
+- **`/models/`:** Start a chat on chat-enabled models.
+- **Sign-up and log-in pages:** link to each other.
+
+Styling is inline CSS in `base.html`. There's no JavaScript.
 
 ## HTTP status codes
 
 | Situation | Status |
 |---|---|
 | Successful GET | 200 |
-| Successful form POST (sign-up, log-in, log-out) | 302 redirect |
-| Invalid sign-up or log-in form | **400**, re-rendered with errors |
+| Successful form POST (sign-up, log-in, log-out, new chat, send) | 302 redirect |
+| Invalid form in our views (sign-up, log-in, new chat, send) | **400**, re-rendered with errors |
+| Sending with a balance of $0 or less | **402** |
+| Proxy failure while sending | **502**, or **503** for rate limits, timeouts and outages (see [chat](chat.md#status-codes-chat-views)) |
 | Logged-in-only page, anonymous visitor | 302 to `/accounts/login/?next=…` |
-| Unknown URL | 404 |
+| Another user's chat, unknown chat, unknown URL | 404 |
 | Invalid **Django admin** form | 200. See [Product decisions → Departures from the plan](product-decisions.md#departures-from-the-plan). |
-| Changing or deleting a ledger entry in admin | 403 |
+| Changing or deleting a ledger entry in admin; adding, changing or deleting a conversation in admin | 403 |
 
 Rule for new views: when a form is invalid, render with `status=400` (override
-`form_invalid` on class-based views).
+`form_invalid` on class-based views, or pass `status=400` to `render`).
