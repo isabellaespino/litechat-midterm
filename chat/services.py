@@ -108,7 +108,10 @@ def _save_exchange(user, llm_model, text, conversation, reply, cost):
     transaction). Returns (conversation, user_message, assistant)."""
     if conversation is None:
         conversation = Conversation.objects.create(
-            owner=user, llm_model=llm_model, title=title_from(text)
+            owner=user,
+            llm_model=llm_model,
+            title=title_from(text),
+            title_source=Conversation.TitleSource.PROVISIONAL,
         )
     user_message = Message.objects.create(
         conversation=conversation, role=Message.Role.USER, content=text

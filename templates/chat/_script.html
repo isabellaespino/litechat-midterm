@@ -93,6 +93,30 @@
     });
   }
 
+  // Automatic title (loop 7): a separate, free background request after a new chat's
+  // first reply. Only "changed" results update the page; everything else is ignored.
+  function requestTitle(chatUrl) {
+    var token = $("[name=csrfmiddlewaretoken]");
+    if (!token) return;
+    fetch(chatUrl + "title/", {
+      method: "POST",
+      headers: { "Accept": "application/json", "X-CSRFToken": token.value },
+      credentials: "same-origin"
+    }).then(function (response) {
+      return response.ok ? response.json() : null;
+    }).then(function (data) {
+      if (!data || !data.changed || location.pathname !== chatUrl) return;
+      var heading = $(".chat-header h1");
+      if (heading) heading.textContent = data.title;
+      var input = $(".chat-header .rename input[name=title]");
+      if (input) input.value = data.title;
+      var header = $(".chat-header");
+      if (header) header.setAttribute("data-title-source", "auto");
+      document.title = data.title + " · Chat4All";
+      replaceSidebars(data.sidebar_html);
+    }).catch(function () { /* a title is a nicety: ignore failures */ });
+  }
+
   function send(form) {
     var textarea = form.querySelector("textarea");
     var draft = textarea.value;
@@ -155,6 +179,7 @@
         history.pushState({}, "", data.chat_url);
         var title = $(".chat-header h1");
         if (title) document.title = title.textContent + " · Chat4All";
+        requestTitle(data.chat_url);
       } else {
         inner.insertAdjacentHTML("beforeend", data.messages_html);
         setBusy(form, false);
@@ -191,6 +216,9 @@
   window.addEventListener("popstate", function () { location.reload(); });
 
   localizeTimes();
+  // A chat still waiting for its title (e.g. the tab closed before the request fired,
+  // or it was created without JavaScript) gets one attempt when opened.
+  if ($(".chat-header[data-title-source='provisional']")) requestTitle(location.pathname);
   scrollToLatest();
 })();
 </script>

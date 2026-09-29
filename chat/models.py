@@ -3,10 +3,21 @@ from django.db import models
 
 
 class Conversation(models.Model):
+    class TitleSource(models.TextChoices):
+        # A new chat starts "provisional" (the first line of its first message) and the
+        # script then asks for an automatic title. "user" is a rename (or a chat that
+        # predates automatic titles) and is never auto-titled.
+        PROVISIONAL = "provisional", "Provisional (first line)"
+        GENERATING = "generating", "Generating"
+        AUTO = "auto", "Automatic"
+        USER = "user", "Set by the user"
+        FAILED = "failed", "Automatic title failed"
+
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="conversations"
     )
     title = models.CharField(max_length=100, default="New chat")
+    title_source = models.CharField(max_length=20, choices=TitleSource.choices, default=TitleSource.USER)
     llm_model = models.ForeignKey(
         "catalog.LLMModel", on_delete=models.PROTECT, related_name="conversations"
     )
