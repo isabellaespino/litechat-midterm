@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
@@ -105,3 +107,58 @@ class BrandTests(TestCase):
         script = Path(settings.BASE_DIR, "templates/chat/_script.html").read_text()
         self.assertIn('" · Chat4All"', script)
         self.assertNotIn("Litechat", script)
+
+
+class ContrastTests(TestCase):
+    """Every text/background pair in the navy-and-gold palette meets WCAG AA (4.5:1)."""
+
+    # (text token, background token) pairs actually used by the CSS.
+    PAIRS = [
+        ("text", "page"), ("text", "card"), ("muted", "page"), ("muted", "card"),
+        ("navy-700", "card"), ("navy-700", "page"),  # links
+        ("on-navy", "navy-900"), ("on-navy", "navy-800"), ("on-navy", "navy-700"),
+        ("muted-on-navy", "navy-900"), ("muted-on-navy", "navy-800"), ("muted-on-navy", "navy-700"),
+        ("gold", "navy-900"), ("gold", "navy-800"),  # nav balance, mobile "Chats"
+        ("navy-900", "gold"), ("navy-900", "gold-hover"),  # button text
+        ("text", "navy-100"), ("muted", "navy-100"), ("text", "gold-soft"),
+        ("error", "card"), ("error", "error-soft"), ("on-navy", "error"),
+    ]
+
+    @classmethod
+    def tokens(cls):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        css = Path(settings.BASE_DIR, "templates/base.html").read_text()
+        root = re.search(r":root\s*\{(.*?)\}", css, re.S).group(1)
+        return dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})", root)), css
+
+    @staticmethod
+    def ratio(fg, bg):
+        def luminance(hex_color):
+            channels = [int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            r, g, b = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+        light, dark = sorted([luminance(fg), luminance(bg)], reverse=True)
+        return (light + 0.05) / (dark + 0.05)
+
+    def test_every_pair_meets_aa(self):
+        tokens, _ = self.tokens()
+        for fg, bg in self.PAIRS:
+            with self.subTest(pair=f"{fg} on {bg}"):
+                self.assertGreaterEqual(self.ratio(tokens[fg], tokens[bg]), 4.5)
+
+    def test_gold_text_only_on_navy(self):
+        # Gold is ~1.9:1 on white, so it may only be a text color where the background is navy.
+        _, css = self.tokens()
+        selectors = [
+            rule.strip()
+            for rule, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+            if re.search(r"(?<![-\w])color:\s*var\(--gold\)", body)
+        ]
+        allowed = {"nav .credit", ".mobile-chats summary"}
+        for selector in selectors:
+            with self.subTest(selector=selector):
+                self.assertTrue(selector in allowed or selector.startswith("body.landing .hero"), selector)
