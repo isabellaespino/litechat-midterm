@@ -283,3 +283,34 @@ class LandingPageTests(TestCase):
                 html = self.client.get(url).content.decode()
                 self.assertNotIn('class="landing"', html)
                 self.assertNotIn("<svg", html)
+
+
+class AllowedHostsTests(TestCase):
+    """A fresh clone copies .env.example, which leaves DJANGO_ALLOWED_HOSTS= blank."""
+
+    DEFAULTS = ["localhost", "127.0.0.1", "0.0.0.0"]
+
+    def test_missing_or_blank_uses_the_defaults(self):
+        from config.settings import parse_allowed_hosts
+
+        for value in (None, "", "   ", ",", " , "):
+            with self.subTest(value=value):
+                self.assertEqual(parse_allowed_hosts(value), self.DEFAULTS)
+
+    def test_explicit_hosts_are_used_as_given(self):
+        from config.settings import parse_allowed_hosts
+
+        self.assertEqual(parse_allowed_hosts("example.com, www.example.com"), ["example.com", "www.example.com"])
+
+    def test_settings_module_with_blank_env_value(self):
+        import importlib
+        import os
+        from unittest import mock
+
+        import config.settings as settings_module
+
+        # load_dotenv doesn't override variables that already exist, so the blank value wins.
+        with mock.patch.dict(os.environ, {"DJANGO_ALLOWED_HOSTS": ""}):
+            reloaded = importlib.reload(settings_module)
+            self.assertEqual(reloaded.ALLOWED_HOSTS, self.DEFAULTS)
+        importlib.reload(settings_module)  # back to the real environment

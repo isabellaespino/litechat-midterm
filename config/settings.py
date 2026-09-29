@@ -34,13 +34,18 @@ if not SECRET_KEY:
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "").lower() in ("1", "true", "yes")
 
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get(
-        "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0"
-    ).split(",")
-    if host.strip()
-]
+DEFAULT_ALLOWED_HOSTS = "localhost,127.0.0.1,0.0.0.0"
+
+
+def parse_allowed_hosts(value):
+    """Comma-separated hosts. A missing *or blank* value uses the defaults: copying
+    .env.example leaves DJANGO_ALLOWED_HOSTS= empty, and an empty list would stop
+    runserver from starting when DEBUG is off."""
+    hosts = [host.strip() for host in (value or "").split(",") if host.strip()]
+    return hosts or parse_allowed_hosts(DEFAULT_ALLOWED_HOSTS)
+
+
+ALLOWED_HOSTS = parse_allowed_hosts(os.environ.get("DJANGO_ALLOWED_HOSTS"))
 
 
 # Application definition

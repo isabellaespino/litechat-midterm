@@ -33,7 +33,9 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Create your .env from the template, then edit it (see below)
+# 3. Create your .env from the template, then edit it (see below). For local use, set
+#    DJANGO_SECRET_KEY to a long random string and DJANGO_DEBUG=true (with DEBUG off,
+#    Django doesn't serve the admin's stylesheets). Add the API keys to chat.
 cp .env.example .env
 
 # 4. Create the database tables
