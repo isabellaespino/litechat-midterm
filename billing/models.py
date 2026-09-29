@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.db import models
 
+from config.money import format_dollars_precise
+
 
 class Wallet(models.Model):
     """A user's prepaid balance. Only billing.services changes balance_micros."""
@@ -47,4 +49,4 @@ class CreditTransaction(models.Model):
         verbose_name = "credit transaction"
 
     def __str__(self):
-        return f"{self.get_kind_display()} {self.amount_micros} µ$ for {self.user}"
+        return f"{self.get_kind_display()} {format_dollars_precise(self.amount_micros)} for {self.user}"

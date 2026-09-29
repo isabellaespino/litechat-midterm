@@ -38,6 +38,13 @@ class SignupCreditTests(TestCase):
 
 
 class LedgerTests(TestCase):
+    def test_str_shows_dollars(self):
+        user = User.objects.create_user("alice", password=PASSWORD)
+        topup = CreditTransaction(user=user, amount_micros=5_000_000, kind="topup")
+        charge = CreditTransaction(user=user, amount_micros=-1_100, kind="charge")
+        self.assertEqual(str(topup), "Top-up $5.00 for alice")
+        self.assertEqual(str(charge), "Charge -$0.0011 for alice")
+
     def test_balance_equals_sum_of_ledger(self):
         user = User.objects.create_user("alice", password=PASSWORD)
         post_transaction(user, 5_000_000, CreditTransaction.Kind.TOPUP)
@@ -68,6 +75,21 @@ class AdminTopUpTests(TestCase):
         txn = CreditTransaction.objects.get(user=self.user, kind="topup")
         self.assertEqual(txn.amount_micros, 5_000_000)
         self.assertEqual(txn.created_by, self.admin)
+
+    def test_admin_messages_and_titles_show_dollars(self):
+        response = self.top_up(amount="5.00")
+        txn = CreditTransaction.objects.get(user=self.user, kind="topup")
+        page = self.client.get(response.url)  # changelist with the "was added" message
+        self.assertContains(page, "Top-up $5.00 for alice")
+        self.assertNotContains(page, "5000000")
+        change = self.client.get(
+            reverse("admin:billing_credittransaction_change", args=[txn.pk])
+        )
+        self.assertContains(change, "Top-up $5.00 for alice")
+        self.assertNotContains(change, "5000000")
+        self.assertNotContains(change, "µ$")
+        index = self.client.get(reverse("admin:index"))  # Recent actions
+        self.assertContains(index, "Top-up $5.00 for alice")
 
     def test_negative_top_up_is_rejected(self):
         response = self.top_up(amount="-1.00")
