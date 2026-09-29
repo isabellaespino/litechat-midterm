@@ -52,9 +52,18 @@
     .sidebar { border-right: 1px solid var(--line); background: var(--card); overflow-y: auto; padding: 12px; }
     .sidebar-inner .new-chat { display: block; text-align: center; margin-bottom: 12px; }
     .chat-links { list-style: none; margin: 0; padding: 0; }
-    .chat-links a { display: block; padding: 6px 10px; border-radius: 6px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .chat-links a:hover { background: var(--bg); text-decoration: none; }
-    .chat-links a[aria-current="page"] { background: #e8f1fb; font-weight: 600; }
+    .chat-row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+    .chat-row:hover, .chat-row:focus-within { background: var(--bg); }
+    .chat-link { flex: 1; min-width: 0; display: block; padding: 6px 10px; border-radius: 6px; color: var(--fg); }
+    .chat-link:hover { text-decoration: none; }
+    .chat-link[aria-current="page"] { background: #e8f1fb; font-weight: 600; }
+    .chat-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chat-delete { flex: none; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; color: var(--muted); opacity: 0; }
+    .chat-row:hover .chat-delete, .chat-row:focus-within .chat-delete, .chat-delete:focus { opacity: 1; }
+    .chat-delete:hover { background: #fdecea; color: var(--error); text-decoration: none; }
+    .chat-header .delete-link { font-size: .9rem; color: var(--error); }
+    .messages.flash { margin: 8px 16px 0; }
+    .btn.danger { background: var(--error); }
     .chat-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
     .mobile-chats { display: none; }
     .chat-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
@@ -111,6 +120,7 @@
       .mobile-chats { display: block; border-bottom: 1px solid var(--line); background: var(--card); padding: 6px 16px; }
       .mobile-chats summary { cursor: pointer; color: var(--accent); }
       .mobile-chats .sidebar-inner { max-height: 40dvh; overflow-y: auto; padding: 8px 0; }
+      .chat-delete { opacity: 1; }
       .bubble { max-width: 90%; }
       .composer-row { flex-wrap: wrap; }
       .composer-row select { max-width: 100%; width: 100%; }
@@ -140,11 +150,13 @@
     {% endif %}
   </nav>
   <main class="{% block main_class %}{% endblock %}">
-    {% if messages %}
-      <ul class="messages">
-        {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
-      </ul>
-    {% endif %}
+    {% block messages %}
+      {% if messages %}
+        <ul class="messages">
+          {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+    {% endblock %}
     {% block content %}{% endblock %}
   </main>
 </body>

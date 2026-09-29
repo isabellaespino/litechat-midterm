@@ -66,6 +66,14 @@
     <p class="muted">No chats yet. <a href="{% url 'chat_new' %}">Start a chat</a>.</p>
   {% endif %}
 
+  {% if deleted_replies %}
+    <div class="card deleted-chats">
+      <strong>Deleted chats</strong>
+      <strong class="chat-cost">{{ deleted_spent|dollars_precise }}</strong>
+      <div class="muted">{{ deleted_replies }} repl{{ deleted_replies|pluralize:"y,ies" }} in chats you deleted. Charges aren't refunded when a chat is deleted.</div>
+    </div>
+  {% endif %}
+
   <h2>Credit added</h2>
   <table>
     <thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="num">Amount</th></tr></thead>

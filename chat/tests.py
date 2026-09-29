@@ -352,7 +352,8 @@ class ChatViewTests(TestCase):
         self.assertLess(sidebar.index("Newer chat"), sidebar.index("Older chat"))
         self.assertNotIn("Bob chat", sidebar)
         self.assertIn(
-            f'<a href="{reverse("chat_detail", args=[older.pk])}" aria-current="page">Older chat</a>',
+            f'<a class="chat-link" href="{reverse("chat_detail", args=[older.pk])}" aria-current="page">'
+            '<span class="chat-title">Older chat</span>',
             sidebar,
         )
         self.assertIn(f'href="{reverse("chat_new")}">+ New chat', sidebar)
@@ -446,7 +447,7 @@ class RenameTests(TestCase):
         self.assertEqual(self.conversation.title, "Trip to Rome")
         page = self.client.get(reverse("chat_detail", args=[self.conversation.pk]))
         self.assertContains(page, "<h1>Trip to Rome</h1>", html=True)
-        self.assertContains(page, 'aria-current="page">Trip to Rome</a>')
+        self.assertContains(page, 'aria-current="page"><span class="chat-title">Trip to Rome</span>')
         self.assertContains(self.client.get(reverse("profile")), "Trip to Rome")
 
     def test_invalid_titles_are_400(self):
@@ -520,7 +521,7 @@ class ChatJsonTests(TestCase):
         self.assertIn("Hello from the model", data["main_html"])
         self.assertIn('class="model-chip"', data["main_html"])
         self.assertNotIn("<select", data["main_html"])
-        self.assertIn('aria-current="page">First question</a>', data["sidebar_html"])
+        self.assertIn('aria-current="page"><span class="chat-title">First question</span>', data["sidebar_html"])
         self.assertEqual(data["balance"], "$1.99")  # $2.00 − $0.0011, rounded down
         self.assertEqual(self.balance(), 2_000_000 - 1_100)
 
@@ -1128,3 +1129,164 @@ class MarkdownInChatTests(TestCase):
         page = thread_html(self.client.get(reverse("chat_detail", args=[Conversation.objects.get().pk])).content.decode())
         self.assertIn("**not bold** &lt;i&gt;x&lt;/i&gt;", page)
         self.assertNotIn("<strong>not bold</strong>", page)
+
+
+# --- Deleting chats (loop 5) --------------------------------------------------------
+
+def ledger_sum(user):
+    from django.db.models import Sum
+
+    return CreditTransaction.objects.filter(user=user).aggregate(t=Sum("amount_micros"))["t"]
+
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class DeleteChatTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def chat_with_replies(self, post, title, replies=2):
+        post.return_value = proxy_ok("reply")
+        self.client.post(reverse("chat_new"), {"llm_model": self.gpt.pk, "content": title})
+        conversation = Conversation.objects.get(title=title)
+        for _ in range(replies - 1):
+            self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "more"})
+        return conversation
+
+    def balance(self):
+        return Wallet.objects.get(user=self.user).balance_micros
+
+    def test_confirmation_page(self, post):
+        conversation = self.chat_with_replies(post, "Trip plans", replies=1)
+        url = reverse("chat_delete", args=[conversation.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Delete “Trip plans”?")
+        self.assertContains(response, "can't be undone")
+        self.assertContains(response, "Charges for its replies stay in your usage history")
+        self.assertContains(response, f'<form method="post" action="{url}">')
+        self.assertContains(response, f'href="{reverse("chat_detail", args=[conversation.pk])}">Cancel</a>')
+        self.assertTrue(Conversation.objects.filter(pk=conversation.pk).exists())  # GET changes nothing
+
+    def test_access_rules(self, post):
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        theirs = Conversation.objects.create(owner=bob, llm_model=self.gpt, title="Bob's")
+        url = reverse("chat_delete", args=[theirs.pk])
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.post(url).status_code, 404)
+        self.assertTrue(Conversation.objects.filter(pk=theirs.pk).exists())
+        self.assertEqual(self.client.get(reverse("chat_delete", args=[99999])).status_code, 404)
+        mine = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        self.assertEqual(self.client.put(reverse("chat_delete", args=[mine.pk])).status_code, 405)
+        self.client.logout()
+        response = self.client.post(reverse("chat_delete", args=[mine.pk]))
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("login")))
+
+    def test_delete_keeps_charges_and_balance(self, post):
+        older = self.chat_with_replies(post, "Older", replies=1)
+        doomed = self.chat_with_replies(post, "Doomed", replies=2)
+        charges_before = list(
+            CreditTransaction.objects.filter(message__conversation=doomed).values("id", "amount_micros", "note")
+        )
+        ledger_rows_before = CreditTransaction.objects.count()
+        balance_before = self.balance()
+
+        response = self.client.post(reverse("chat_delete", args=[doomed.pk]))
+
+        self.assertRedirects(response, reverse("chat_list"), fetch_redirect_response=False)
+        self.assertFalse(Conversation.objects.filter(pk=doomed.pk).exists())
+        self.assertFalse(Message.objects.filter(conversation_id=doomed.pk).exists())
+        # Charges stay: same rows, same amounts and notes, now with no message.
+        self.assertEqual(CreditTransaction.objects.count(), ledger_rows_before)
+        for before in charges_before:
+            row = CreditTransaction.objects.get(pk=before["id"])
+            self.assertIsNone(row.message_id)
+            self.assertEqual((row.amount_micros, row.note), (before["amount_micros"], before["note"]))
+        self.assertEqual(self.balance(), balance_before)  # no refund
+        self.assertEqual(self.balance(), ledger_sum(self.user))
+
+        # /chats/ now opens the remaining chat, which shows the flash message.
+        page = self.client.get(reverse("chat_list"), follow=True)
+        self.assertEqual(page.redirect_chain[-1][0], reverse("chat_detail", args=[older.pk]))
+        self.assertContains(page, "Chat deleted.")
+        self.assertNotContains(page, "Doomed")
+
+    def test_deleting_last_chat_opens_new_chat(self, post):
+        only = self.chat_with_replies(post, "Only one", replies=1)
+        self.client.post(reverse("chat_delete", args=[only.pk]))
+        self.assertRedirects(self.client.get(reverse("chat_list")), reverse("chat_new"))
+
+    def test_profile_deleted_chats_line_reconciles(self, post):
+        profile = self.client.get(reverse("profile"))
+        self.assertNotContains(profile, "Deleted chats")
+        kept = self.chat_with_replies(post, "Kept", replies=1)
+        doomed = self.chat_with_replies(post, "Doomed", replies=2)
+        self.client.post(reverse("chat_delete", args=[doomed.pk]))
+
+        profile = self.client.get(reverse("profile"))
+        self.assertContains(profile, "Deleted chats")
+        self.assertContains(profile, "2 replies in chats you deleted")
+        self.assertEqual(profile.context["deleted_replies"], 2)
+        self.assertEqual(profile.context["deleted_spent"], 2 * 1_100)
+        per_chat = sum(c.total_cost or 0 for c in profile.context["page"])
+        self.assertEqual(per_chat + profile.context["deleted_spent"], profile.context["total_spent"])
+        self.assertContains(profile, "$0.0022")  # the deleted total
+
+    def test_sidebar_and_header_delete_links(self, post):
+        conversation = self.chat_with_replies(post, "Linked", replies=1)
+        url = reverse("chat_delete", args=[conversation.pk])
+        page = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        self.assertIn(f'<a class="chat-delete" href="{url}" aria-label="Delete “Linked”"', page)
+        self.assertIn(f'<a class="delete-link" href="{url}">Delete</a>', page)
+
+    def test_reply_in_flight_when_chat_deleted(self, post):
+        for mode in ("form", "json"):
+            with self.subTest(mode=mode):
+                conversation = self.chat_with_replies(post, f"Racing {mode}", replies=1)
+                balance_before = self.balance()
+                messages_before = Message.objects.count()
+
+                def delete_then_reply(*args, **kwargs):
+                    Conversation.objects.filter(pk=conversation.pk).delete()  # e.g. from another tab
+                    return proxy_ok("late reply")
+
+                post.side_effect = delete_then_reply
+                headers = {"HTTP_ACCEPT": "application/json"} if mode == "json" else {}
+                response = self.client.post(
+                    reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"}, **headers
+                )
+                post.side_effect = None
+
+                self.assertEqual(response.status_code, 404)
+                if mode == "json":
+                    self.assertEqual(response.json()["error"], "This chat was deleted.")
+                late = CreditTransaction.objects.get(note=f"Reply in deleted chat “Racing {mode}”")
+                self.assertEqual(late.amount_micros, -1_100)
+                self.assertIsNone(late.message_id)
+                self.assertEqual(self.balance(), balance_before - 1_100)  # charged, not lost
+                self.assertEqual(self.balance(), ledger_sum(self.user))
+                # Only the deleted chat's own messages went; nothing new was saved.
+                self.assertEqual(Message.objects.count(), messages_before - 2)
+
+    def test_race_backstop_when_check_passes_but_write_fails(self, post):
+        conversation = self.chat_with_replies(post, "Backstop", replies=1)
+        balance_before = self.balance()
+
+        def delete_then_reply(*args, **kwargs):
+            Conversation.objects.filter(pk=conversation.pk).delete()
+            return proxy_ok("late reply")
+
+        post.side_effect = delete_then_reply
+        # First existence check (inside the transaction) wrongly says "still there", so the
+        # writes run and fail; the backstop's re-check then sees it's gone.
+        with mock.patch("chat.services._conversation_exists", side_effect=[True, False]):
+            response = self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"})
+        post.side_effect = None
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(CreditTransaction.objects.filter(note="Reply in deleted chat “Backstop”").count(), 1)
+        self.assertEqual(self.balance(), balance_before - 1_100)
+        self.assertEqual(self.balance(), ledger_sum(self.user))

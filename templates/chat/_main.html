@@ -12,8 +12,12 @@
       </form>
       {% for e in rename_form.title.errors %}<p class="alert" role="alert">{{ e }}</p>{% endfor %}
     </details>
+    <a class="delete-link" href="{% url 'chat_delete' conversation.pk %}">Delete</a>
   {% endif %}
 </header>
+{% if messages %}
+  <ul class="messages flash">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
+{% endif %}
 <div class="thread" aria-live="polite">
   <div class="thread-inner">
     {% for message in messages_list %}

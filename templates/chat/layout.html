@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block body_class %}app-page{% endblock %}
 {% block main_class %}chat-app{% endblock %}
+{# Flash messages render inside the chat column (see _main.html), not as a grid cell. #}
+{% block messages %}{% endblock %}
 {% block content %}
   <aside class="sidebar">{% include "chat/_sidebar.html" %}</aside>
   <section class="chat-main">{% include "chat/_main.html" %}</section>

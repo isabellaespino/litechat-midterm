@@ -2,7 +2,10 @@
   <a class="btn new-chat" href="{% url 'chat_new' %}">+ New chat</a>
   <ul class="chat-links" aria-label="Your chats">
     {% for c in sidebar_conversations %}
-      <li><a href="{% url 'chat_detail' c.pk %}"{% if conversation and c.pk == conversation.pk %} aria-current="page"{% endif %}>{{ c.title }}</a></li>
+      <li class="chat-row">
+        <a class="chat-link" href="{% url 'chat_detail' c.pk %}"{% if conversation and c.pk == conversation.pk %} aria-current="page"{% endif %}><span class="chat-title">{{ c.title }}</span></a>
+        <a class="chat-delete" href="{% url 'chat_delete' c.pk %}" aria-label="Delete “{{ c.title }}”" title="Delete chat">×</a>
+      </li>
     {% empty %}
       <li class="muted">No chats yet</li>
     {% endfor %}
