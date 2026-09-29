@@ -32,7 +32,7 @@
           <tbody>
             {% for r in c.replies %}
               <tr class="reply-row">
-                <td>{{ r.created_at|date:"M j, Y H:i" }}{% if r.usage_estimated %} <span class="muted">(estimated)</span>{% endif %}{% if r.was_cut_off %} <span class="muted">(cut short)</span>{% endif %}</td>
+                <td>{{ r.created_at|date:"M j, Y H:i" }}{% if r.usage_estimated %} <span class="muted">(estimated)</span>{% endif %}{% if r.was_cut_off %} <span class="muted">(cut short)</span>{% endif %}{% if r.was_blocked %} <span class="muted">(blocked)</span>{% endif %}</td>
                 <td class="num">{{ r.input_tokens }}</td>
                 <td class="num">{{ r.output_tokens }}</td>
                 <td class="num">{{ r.cost_micros|dollars_precise }}</td>

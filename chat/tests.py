@@ -199,11 +199,14 @@ class ChatViewTests(TestCase):
                 self.assertTrue(response.url.startswith(reverse("login")))
 
     def test_new_chat_page_lists_only_chat_models(self, post):
+        make_gpt(provider="mistral", api_model_id="mistral-x", display_name="Mistral X")
         response = self.client.get(reverse("chat_new"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "GPT-5.6 Luna")
+        self.assertContains(response, "Claude Haiku")
         self.assertContains(response, '<optgroup label="OpenAI">')
-        self.assertNotContains(response, "Claude Haiku")
+        self.assertContains(response, '<optgroup label="Anthropic">')
+        self.assertNotContains(response, "Mistral X")  # no adapter, not in CHAT_PROVIDERS
 
     def test_start_chat_charges_and_redirects(self, post):
         post.return_value = proxy_ok()
@@ -303,7 +306,8 @@ class ChatViewTests(TestCase):
         too_long = "x" * 8001
         self.assertEqual(self.start_chat("").status_code, 400)
         self.assertEqual(self.start_chat(too_long).status_code, 400)
-        self.assertEqual(self.start_chat(model=self.claude).status_code, 400)
+        unsupported = make_gpt(provider="mistral", api_model_id="mistral-x", display_name="Mistral X")
+        self.assertEqual(self.start_chat(model=unsupported).status_code, 400)
         response = self.client.post(reverse("chat_new"), {"content": "Hi"})
         self.assertEqual(response.status_code, 400)
 
@@ -418,10 +422,11 @@ class ChatViewTests(TestCase):
         self.assertNotContains(page, "<script>alert(1)</script>")
         self.assertContains(page, "&lt;script&gt;alert(1)&lt;/script&gt;")
 
-    def test_models_page_marks_coming_soon(self, post):
+    def test_models_page_has_no_coming_soon(self, post):
+        make_gpt(provider="google", api_model_id="gemini-3.8-flash", display_name="Gemini Flash")
         response = self.client.get(reverse("model_list"))
-        self.assertContains(response, "Coming soon", count=1)
-        self.assertContains(response, f'href="{reverse("chat_new")}">Start a chat')
+        self.assertNotContains(response, "Coming soon")
+        self.assertContains(response, f'href="{reverse("chat_new")}">Start a chat', count=3)
 
 
 class RenameTests(TestCase):
@@ -564,7 +569,7 @@ class ChatJsonTests(TestCase):
         for response in (
             self.start_chat(""),
             self.start_chat("x" * 8001),
-            self.start_chat(model=self.claude),
+            self.start_chat(model=make_gpt(provider="mistral", api_model_id="mistral-x", display_name="Mistral X")),
         ):
             with self.subTest(body=response.content[:60]):
                 self.assertEqual(response.status_code, 400)
@@ -690,3 +695,182 @@ class ChatScriptTests(TestCase):
         for url in (reverse("home"), reverse("profile"), reverse("model_list")):
             with self.subTest(url=url):
                 self.assertNotContains(self.client.get(url), "data-chat-script")
+
+
+def provider_reply(provider, text="Hello!", input_tokens=1000, output_tokens=300, stop=None, safety=False):
+    """A mocked proxy response in the given provider's own format."""
+    response = mock.Mock(status_code=200)
+    if provider == "openai":
+        body = {
+            "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": stop or "stop"}],
+            "usage": {"prompt_tokens": input_tokens, "completion_tokens": output_tokens},
+        }
+    elif provider == "anthropic":
+        body = {
+            "content": [{"type": "text", "text": text}],
+            "stop_reason": stop or "end_turn",
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        }
+    else:
+        candidate = {"finishReason": "SAFETY" if safety else (stop or "STOP")}
+        if not safety:
+            candidate["content"] = {"role": "model", "parts": [{"text": text}]}
+        body = {
+            "candidates": [candidate],
+            "usageMetadata": {"promptTokenCount": input_tokens, "candidatesTokenCount": output_tokens},
+        }
+    response.json.return_value = body
+    return response
+
+
+# Seeded prices (µ$ per 1M): Claude 1.00/5.00, GPT 0.50/2.00, Gemini 0.30/2.50.
+# At 1,000 in + 300 out: Claude 2,500 µ$, GPT 1,100 µ$, Gemini 1,050 µ$.
+PROVIDER_MODELS = [
+    ("openai", "gpt-5.6-luna", 1_100),
+    ("anthropic", "claude-haiku-4-5-20251001", 2_500),
+    ("google", "gemini-3.8-flash", 1_050),
+]
+
+
+@override_settings(
+    OPENAI_API_KEY="test-openai-key",
+    ANTHROPIC_API_KEY="test-anthropic-key",
+    GOOGLE_API_KEY="test-google-key",
+)
+@mock.patch("llm.http.requests.post")
+class AllProvidersChatTests(TestCase):
+    """Charging, 402, errors and both response modes behave the same for every provider."""
+
+    def setUp(self):
+        from django.core.management import call_command
+
+        call_command("seed", stdout=mock.Mock())
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.client.force_login(self.user)
+
+    def model(self, api_model_id):
+        return LLMModel.objects.get(api_model_id=api_model_id)
+
+    def balance(self):
+        return Wallet.objects.get(user=self.user).balance_micros
+
+    def set_balance(self, micros):
+        Wallet.objects.filter(user=self.user).update(balance_micros=micros)
+
+    def reset(self):
+        Conversation.objects.all().delete()
+        CreditTransaction.objects.filter(kind="charge").delete()
+        self.set_balance(2_000_000)
+
+    def test_charges_each_models_own_price_in_both_modes(self, post):
+        for provider, api_model_id, cost in PROVIDER_MODELS:
+            for mode in ("form", "json"):
+                with self.subTest(provider=provider, mode=mode):
+                    self.reset()
+                    post.reset_mock()
+                    post.return_value = provider_reply(provider, text=f"Hi from {provider}")
+                    headers = {"HTTP_ACCEPT": "application/json"} if mode == "json" else {}
+                    response = self.client.post(
+                        reverse("chat_new"),
+                        {"llm_model": self.model(api_model_id).pk, "content": "Hi there"},
+                        **headers,
+                    )
+                    self.assertEqual(response.status_code, 200 if mode == "json" else 302)
+                    self.assertEqual(self.balance(), 2_000_000 - cost)
+                    charge = CreditTransaction.objects.get(kind="charge")
+                    self.assertEqual(charge.amount_micros, -cost)
+                    self.assertEqual(charge.message.content, f"Hi from {provider}")
+                    self.assertIn(f"/{provider}/", post.call_args.args[0])
+                    if mode == "json":
+                        self.assertEqual(response.json()["balance"], format_dollars(self.balance()))
+
+    def test_history_resent_in_each_providers_format(self, post):
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                self.reset()
+                post.return_value = provider_reply(provider, text="A1")
+                self.client.post(reverse("chat_new"), {"llm_model": self.model(api_model_id).pk, "content": "Q1"})
+                conversation = Conversation.objects.get()
+                post.return_value = provider_reply(provider, text="A2")
+                self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"})
+                body = post.call_args.kwargs["json"]
+                if provider == "google":
+                    self.assertEqual(
+                        [(c["role"], c["parts"][0]["text"]) for c in body["contents"]],
+                        [("user", "Q1"), ("model", "A1"), ("user", "Q2")],
+                    )
+                else:
+                    self.assertEqual(
+                        [(m["role"], m["content"]) for m in body["messages"]],
+                        [("user", "Q1"), ("assistant", "A1"), ("user", "Q2")],
+                    )
+
+    def test_out_of_credit_blocks_every_provider_before_the_proxy(self, post):
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            for micros in (0, -1):
+                with self.subTest(provider=provider, balance=micros):
+                    self.set_balance(micros)
+                    response = self.client.post(
+                        reverse("chat_new"), {"llm_model": self.model(api_model_id).pk, "content": "Hi"}
+                    )
+                    self.assertEqual(response.status_code, 402)
+        post.assert_not_called()
+
+    def test_proxy_failures_charge_nothing_for_every_provider(self, post):
+        import requests
+
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            for return_value, side_effect, expected in (
+                (proxy_status(500), None, 502),
+                (proxy_status(429), None, 503),
+                (None, requests.Timeout(), 503),
+            ):
+                with self.subTest(provider=provider, expected=expected):
+                    post.return_value, post.side_effect = return_value, side_effect
+                    response = self.client.post(
+                        reverse("chat_new"),
+                        {"llm_model": self.model(api_model_id).pk, "content": "My draft"},
+                        HTTP_ACCEPT="application/json",
+                    )
+                    self.assertEqual(response.status_code, expected)
+                    self.assertEqual(Conversation.objects.count(), 0)
+                    self.assertEqual(self.balance(), 2_000_000)
+        post.side_effect = None
+
+    def test_missing_key_affects_only_that_provider(self, post):
+        for missing, api_model_id, _ in PROVIDER_MODELS:
+            key_setting = f"{missing.upper()}_API_KEY"
+            with self.subTest(missing=key_setting), override_settings(**{key_setting: ""}):
+                for provider, other_id, cost in PROVIDER_MODELS:
+                    self.reset()
+                    post.reset_mock()
+                    post.return_value = provider_reply(provider)
+                    response = self.client.post(
+                        reverse("chat_new"), {"llm_model": self.model(other_id).pk, "content": "Hi"}
+                    )
+                    if provider == missing:
+                        self.assertEqual(response.status_code, 503)
+                        post.assert_not_called()
+                        self.assertEqual(self.balance(), 2_000_000)
+                    else:
+                        self.assertEqual(response.status_code, 302)
+
+    def test_google_safety_block_is_charged_and_shown(self, post):
+        post.return_value = provider_reply("google", safety=True, input_tokens=1000, output_tokens=0)
+        self.client.post(reverse("chat_new"), {"llm_model": self.model("gemini-3.8-flash").pk, "content": "Hi"})
+        conversation = Conversation.objects.get()
+        reply = conversation.messages.last()
+        self.assertEqual((reply.content, reply.stop_reason), ("", "safety"))
+        self.assertEqual(self.balance(), 2_000_000 - 300)  # 1,000 input tokens at $0.30/1M
+        page = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        self.assertIn("The model declined to answer this (safety filter).", page)
+        self.assertNotIn("$", page)
+        self.assertContains(self.client.get(reverse("profile")), "(blocked)")
+
+    def test_picker_lists_all_three_models(self, post):
+        page = main_region(self.client.get(reverse("chat_new")))
+        for label in ("Claude Haiku · Value", "GPT-5.6 Luna · Value", "Gemini Flash · Value"):
+            self.assertIn(label, page)
+        for group in ("Anthropic", "Google", "OpenAI"):
+            self.assertIn(f'<optgroup label="{group}">', page)
+        self.assertNotContains(self.client.get(reverse("model_list")), "Coming soon")
