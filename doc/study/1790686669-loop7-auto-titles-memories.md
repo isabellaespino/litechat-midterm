@@ -5,7 +5,7 @@
 - **Builds on:** loop 6 on `main` (wiki: `chat.md` send flow and renaming, `billing.md`
   ledger, My Profile and Global System Prompt, `product-decisions.md` core and out of
   scope)
-- **Status:** draft for review. Decisions needed in §4.
+- **Status:** decisions recorded (§4). Planned as loop 7.
 
 ## 1. Request
 
@@ -252,23 +252,20 @@ chat. Here's the cost of the extra input, at about 4 characters per token:
 
 ---
 
-## 4. Decisions for you
+## 4. Decisions
 
-1. **Who pays for the title call:** the **user**, as a visible `title` ledger row, skipped
-   at $0 or less (recommended)? Or the operator absorbs it?
-2. **Which model:** the **chat's own model** (recommended; no new provider sees the
-   content)? Or the cheapest model?
-3. **When:** a **separate request from the script right after the first reply**
-   (recommended; no added wait, and no-JS keeps the first-line title)? Or inside the
-   first send (adds a full proxy round trip)?
-4. **On failure:** keep the provisional title, with **no charge if the call failed**, a
-   charge if the model answered unusably, no retry, and a rename always winning
-   (recommended)?
-5. **Memory limits:** **10 memories × 200 characters** (recommended), with the per-message
-   cost estimate shown on My Profile? Or tighter (5 × 200)?
-6. **Deleting a memory:** immediately, with no confirmation page (recommended)?
-7. **My Profile totals:** show a single "Spent" that includes titles, or split into
-   "replies" and "titles"?
+Decided on 2026-09-29, before planning loop 7. **#1 departs from the study's
+recommendation (§2.4).**
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Who pays for the title call | **The app absorbs it. Titles are free and invisible to the user.** Each title call's token usage and cost are **recorded for admins only**, visible in Django admin and **never** on My Profile, in the credit history, or anywhere else users see. **Nothing goes in the user's ledger**, so `balance == sum(ledger)` and the "Deleted chats" reconciliation are unaffected, and no new ledger kind is needed. **Every new chat gets a title attempt regardless of balance**, so there's no $0 skip. |
+| 2 | Which model | **The chat's own model** (§2.3). |
+| 3 | When | **A separate request right after the first reply** (§2.2 option C). The first reply's latency is unchanged. |
+| 4 | Title failures | As in §2.5, **except the user is never charged** in any case. The cost of an answered-but-unusable title, a title that lost a race with a rename, or one whose chat was deleted mid-call, is recorded for admins only. |
+| 5 | Memory limits | **At most 10 memories of 200 characters each** (§3.3). |
+| 6 | Deleting a memory | **Immediately, with no confirmation** (§3.1). |
+| 7 | My Profile totals | **One "Spent" total, for replies only**, and the totals must still add up: (per-chat totals + deleted chats = spent; added − spent = balance). Titles never appear there. |
 
 ## 5. Suggested plan shape (loop 7), one conventional commit each
 
