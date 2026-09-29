@@ -2,7 +2,6 @@ from django import forms
 from django.conf import settings
 
 from catalog.models import LLMModel
-from config.money import format_dollars_precise
 
 
 def chat_models():
@@ -11,11 +10,8 @@ def chat_models():
 
 
 def model_label(model):
-    return (
-        f"{model.display_name} · {model.get_tier_display()} · "
-        f"{format_dollars_precise(model.input_price_micros_per_mtok)} / "
-        f"{format_dollars_precise(model.output_price_micros_per_mtok)} per 1M tokens"
-    )
+    # No prices here: costs live on My Profile and /models/, not in the chat pages.
+    return f"{model.display_name} · {model.get_tier_display()}"
 
 
 class MessageForm(forms.Form):
@@ -27,7 +23,7 @@ class MessageForm(forms.Form):
 
 
 class NewChatForm(MessageForm):
-    llm_model = forms.ChoiceField(label="Model")
+    llm_model = forms.ChoiceField(label="Model", widget=forms.Select(attrs={"aria-label": "Model"}))
     field_order = ["llm_model", "content"]
 
     def __init__(self, *args, **kwargs):

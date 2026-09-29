@@ -1,0 +1,21 @@
+<details class="mobile-chats"><summary>Chats</summary>{% include "chat/_sidebar.html" %}</details>
+<header class="chat-header">
+  <h1>{% if conversation %}{{ conversation.title }}{% else %}New chat{% endif %}</h1>
+</header>
+<div class="thread" aria-live="polite">
+  <div class="thread-inner">
+    {% for message in messages_list %}
+      {% include "chat/_message.html" with is_latest=forloop.last %}
+    {% empty %}
+      <p class="empty">Start a conversation. Pick a model and type your message below.</p>
+    {% endfor %}
+  </div>
+</div>
+<div class="composer-wrap">
+  {% if model_available %}
+    {% include "chat/_composer.html" %}
+  {% else %}
+    {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+    <p class="muted composer">This model is no longer available. <a href="{% url 'chat_new' %}">Start a new chat</a>.</p>
+  {% endif %}
+</div>

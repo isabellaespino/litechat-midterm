@@ -1,3 +1,4 @@
+import re
 from unittest import mock
 
 from django.contrib.auth.models import User
@@ -133,6 +134,12 @@ class ChatAdminTests(TestCase):
         )
 
 
+def main_region(response):
+    """The page below the top nav (sidebar + chat), where no costs may appear."""
+    content = response.content.decode()
+    return content[content.index("<main"):]
+
+
 def proxy_ok(content="Hello! How can I help?", prompt_tokens=1000, completion_tokens=300, finish_reason="stop"):
     response = mock.Mock(status_code=200)
     response.json.return_value = {
@@ -215,7 +222,6 @@ class ChatViewTests(TestCase):
         page = self.client.get(reverse("chat_detail", args=[conversation.pk]))
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Hello! How can I help?")
-        self.assertContains(page, "1000 in / 300 out tokens · $0.0011")
 
     def test_second_send_resends_history(self, post):
         post.return_value = proxy_ok("A1")
@@ -317,20 +323,82 @@ class ChatViewTests(TestCase):
         self.assertEqual(self.client.get(reverse("chat_detail", args=[99999])).status_code, 404)
         post.assert_not_called()
 
-    def test_chat_list_shows_own_chats_newest_first(self, post):
+    def test_chats_url_redirects_to_latest_chat(self, post):
+        self.assertRedirects(self.client.get(reverse("chat_list")), reverse("chat_new"))
+        post.return_value = proxy_ok()
+        self.start_chat("Older chat")
+        self.start_chat("Newer chat")
+        newest = Conversation.objects.get(title="Newer chat")
+        self.assertRedirects(
+            self.client.get(reverse("chat_list")), reverse("chat_detail", args=[newest.pk])
+        )
+
+    def test_sidebar_lists_own_chats_newest_first(self, post):
         bob = User.objects.create_user("bob", password=PASSWORD)
         Conversation.objects.create(owner=bob, llm_model=self.gpt, title="Bob chat")
         post.return_value = proxy_ok()
         self.start_chat("Older chat")
         self.start_chat("Newer chat")
+        older = Conversation.objects.get(title="Older chat")
 
-        response = self.client.get(reverse("chat_list"))
-        self.assertEqual(response.status_code, 200)
-        content = response.content.decode()
-        self.assertLess(content.index("Newer chat"), content.index("Older chat"))
-        self.assertNotIn("Bob chat", content)
-        self.assertContains(response, f'href="{reverse("chat_list")}"')
-        self.assertContains(response, f'href="{reverse("chat_new")}"')
+        response = self.client.get(reverse("chat_detail", args=[older.pk]))
+        sidebar = main_region(response).split('<section class="chat-main">')[0]
+        self.assertLess(sidebar.index("Newer chat"), sidebar.index("Older chat"))
+        self.assertNotIn("Bob chat", sidebar)
+        self.assertIn(
+            f'<a href="{reverse("chat_detail", args=[older.pk])}" aria-current="page">Older chat</a>',
+            sidebar,
+        )
+        self.assertIn(f'href="{reverse("chat_new")}">+ New chat', sidebar)
+        self.assertContains(response, f'href="{reverse("chat_list")}">Chats</a>')
+
+    def test_bubbles_in_order(self, post):
+        post.return_value = proxy_ok("A1")
+        self.start_chat("Q1")
+        conversation = Conversation.objects.get()
+        post.return_value = proxy_ok("A2")
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Q2"})
+        region = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        thread = region.split('class="thread-inner"')[1]
+        bubbles = re.findall(r'class="bubble (user|assistant)"', thread)
+        self.assertEqual(bubbles, ["user", "assistant", "user", "assistant"])
+        self.assertLess(thread.index("Q1"), thread.index("A1"))
+        self.assertLess(thread.index("A1"), thread.index("Q2"))
+
+    def test_no_costs_or_tokens_on_chat_pages(self, post):
+        post.return_value = proxy_ok()
+        self.start_chat()
+        conversation = Conversation.objects.get()
+        for url in (reverse("chat_detail", args=[conversation.pk]), reverse("chat_new")):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                region = main_region(response)
+                for text in ("tokens", "per 1M", "$0.0011", "$0.50", "$"):
+                    self.assertNotIn(text, region)
+                self.assertContains(response, "My Profile · ")
+
+    def test_composer_picker_and_model_label(self, post):
+        new = main_region(self.client.get(reverse("chat_new")))
+        self.assertIn('<select name="llm_model"', new)
+        self.assertIn('<optgroup label="OpenAI">', new)
+        self.assertIn("GPT-5.6 Luna · Value", new)
+
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        existing = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        self.assertNotIn("<select", existing)
+        self.assertIn('<span class="model-chip" title="Model for this chat">GPT-5.6 Luna</span>', existing)
+
+    def test_out_of_credit_disables_composer(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        self.set_balance(0)
+        for url in (reverse("chat_new"), reverse("chat_detail", args=[conversation.pk])):
+            with self.subTest(url=url):
+                region = main_region(self.client.get(url))
+                self.assertIn("You're out of credit", region)
+                self.assertIn(f'href="{reverse("profile")}"', region)
+                self.assertRegex(region, r"<textarea[^>]* disabled>")
+                self.assertRegex(region, r'<button type="submit" class="btn" disabled>')
+        post.assert_not_called()
 
     def test_cut_off_reply_is_charged_and_flagged(self, post):
         post.return_value = proxy_ok(completion_tokens=1024, finish_reason="length")
@@ -338,7 +406,8 @@ class ChatViewTests(TestCase):
         conversation = Conversation.objects.get()
         self.assertEqual(self.balance(), 2_000_000 - reply_cost_micros(1000, 1024, 500_000, 2_000_000))
         page = self.client.get(reverse("chat_detail", args=[conversation.pk]))
-        self.assertContains(page, "(cut off at 1,024 tokens)")
+        self.assertContains(page, "Reply was cut short.")
+        self.assertNotContains(page, "1,024")
 
     def test_reply_html_is_escaped(self, post):
         post.return_value = proxy_ok("<script>alert(1)</script>")

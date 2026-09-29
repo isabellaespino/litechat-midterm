@@ -1,8 +1,3 @@
-{% load money %}{% if out_of_credit %}
-  <ul class="messages"><li class="error">
-    You're out of credit (Available credit: {{ available_credit_micros|dollars }}).
-    Contact an administrator to top up. <a href="{% url 'profile' %}">View your profile</a>
-  </li></ul>
-{% endif %}{% if error %}
-  <ul class="messages"><li class="error">{{ error }}</li></ul>
+{% if out_of_credit %}
+  <p class="notice" data-out-of-credit>You're out of credit. Contact an administrator to top up. <a href="{% url 'profile' %}">View your profile</a></p>
 {% endif %}
