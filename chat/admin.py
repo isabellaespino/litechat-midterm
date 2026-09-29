@@ -28,9 +28,9 @@ class ConversationAdmin(admin.ModelAdmin):
     """Read-only, for support."""
 
     list_display = ["title", "owner", "llm_model", "message_count", "total_cost", "updated_at"]
-    list_filter = ["llm_model"]
+    list_filter = ["llm_model", "include_memories"]
     search_fields = ["title", "owner__username"]
-    fields = ["title", "owner", "llm_model", "total_cost", "created_at", "updated_at"]
+    fields = ["title", "owner", "llm_model", "include_memories", "total_cost", "created_at", "updated_at"]
     readonly_fields = fields
     inlines = [MessageInline]
 

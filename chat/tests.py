@@ -1718,3 +1718,92 @@ class MemoriesInChatTests(TestCase):
         title_body = post.call_args.kwargs["json"]
         self.assertNotIn("systemInstruction", title_body)
         self.assertNotIn("student", str(title_body))
+
+
+# --- Include memories switch: per-chat setting (loop 8) -----------------------------
+
+@override_settings(
+    OPENAI_API_KEY="test-openai-key",
+    ANTHROPIC_API_KEY="test-anthropic-key",
+    GOOGLE_API_KEY="test-google-key",
+)
+@mock.patch("llm.http.requests.post")
+class IncludeMemoriesSettingTests(TestCase):
+    def setUp(self):
+        from django.core.management import call_command
+
+        from accounts.models import Memory
+
+        call_command("seed", stdout=mock.Mock())
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        Memory.objects.create(user=self.user, text="I'm a student")
+
+    def set_prompt(self, text):
+        from accounts.services import get_settings
+
+        row = get_settings(self.user)
+        row.system_prompt = text
+        row.save()
+
+    def send(self, post, provider, api_model_id, conversation=None, include_memories=True):
+        from .services import send_message
+
+        post.return_value = provider_reply(provider)
+        model = LLMModel.objects.get(api_model_id=api_model_id)
+        conversation = send_message(self.user, model, "Hello", conversation, include_memories=include_memories)
+        return conversation, post.call_args.kwargs["json"]
+
+    def test_off_sends_prompt_only_for_each_provider(self, post):
+        self.set_prompt("Always reply in French.")
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                conversation, body = self.send(post, provider, api_model_id, include_memories=False)
+                self.assertEqual(sent_system_prompt(provider, body), "Always reply in French.")
+                self.assertNotIn("About the user", str(body))
+                conversation.refresh_from_db()
+                self.assertFalse(conversation.include_memories)
+
+    def test_off_without_prompt_sends_no_system_field(self, post):
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                _, body = self.send(post, provider, api_model_id, include_memories=False)
+                self.assertIsNone(sent_system_prompt(provider, body))
+                self.assertNotIn("system", body)
+                self.assertNotIn("systemInstruction", body)
+
+    def test_existing_chat_updated_in_the_same_send(self, post):
+        conversation, body = self.send(post, "anthropic", "claude-haiku-4-5-20251001")
+        self.assertIn("I'm a student", body["system"])
+        conversation, body = self.send(post, "anthropic", "claude-haiku-4-5-20251001", conversation, include_memories=False)
+        self.assertNotIn("system", body)
+        conversation.refresh_from_db()
+        self.assertFalse(conversation.include_memories)
+        conversation, body = self.send(post, "anthropic", "claude-haiku-4-5-20251001", conversation, include_memories=True)
+        self.assertIn("I'm a student", body["system"])
+        conversation.refresh_from_db()
+        self.assertTrue(conversation.include_memories)
+
+    def test_default_is_on(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=LLMModel.objects.first())
+        self.assertTrue(conversation.include_memories)  # chats that predate loop 8 keep sending memories
+
+    def test_charging_unchanged_by_the_switch(self, post):
+        from django.db.models import Sum
+
+        _, _ = self.send(post, "google", "gemini-3.8-flash", include_memories=True)
+        _, _ = self.send(post, "google", "gemini-3.8-flash", include_memories=False)
+        charges = list(CreditTransaction.objects.filter(kind="charge").values_list("amount_micros", flat=True))
+        self.assertEqual(charges, [-1_050, -1_050])  # from the reported usage, whatever the switch
+        wallet = Wallet.objects.get(user=self.user).balance_micros
+        self.assertEqual(wallet, CreditTransaction.objects.filter(user=self.user).aggregate(t=Sum("amount_micros"))["t"])
+
+    def test_title_never_carries_memories_with_switch_on(self, post):
+        self.client.force_login(self.user)
+        conversation, _ = self.send(post, "openai", "gpt-5.6-luna", include_memories=True)
+        Conversation.objects.filter(pk=conversation.pk).update(title_source="provisional")
+        post.return_value = provider_reply("openai", text="A Title", input_tokens=150, output_tokens=8)
+        response = self.client.post(reverse("chat_title", args=[conversation.pk]), HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        body = post.call_args.kwargs["json"]
+        self.assertEqual([m["role"] for m in body["messages"]], ["user"])  # no system message
+        self.assertNotIn("student", str(body))

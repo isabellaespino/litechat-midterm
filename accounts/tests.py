@@ -286,3 +286,22 @@ class MemoryTests(TestCase):
         page = self.client.get(reverse("admin:auth_user_change", args=[self.user.pk]))
         self.assertContains(page, "Memories")
         self.assertContains(page, "I&#x27;m a student")
+
+
+class SystemTextSwitchTests(TestCase):
+    def test_include_memories_false_keeps_prompt_only(self):
+        from .models import Memory
+        from .services import get_settings, system_text_for
+
+        user = User.objects.create_user("alice", password=PASSWORD)
+        Memory.objects.create(user=user, text="I'm a student")
+        self.assertIsNone(system_text_for(user, include_memories=False))  # memories only -> nothing left
+        self.assertIn("I'm a student", system_text_for(user, include_memories=True))
+        row = get_settings(user)
+        row.system_prompt = "Always reply in French."
+        row.save()
+        self.assertEqual(system_text_for(user, include_memories=False), "Always reply in French.")
+        self.assertEqual(
+            system_text_for(user),
+            "Always reply in French.\n\nAbout the user (notes they asked you to remember):\n- I'm a student",
+        )

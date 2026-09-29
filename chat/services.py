@@ -53,7 +53,7 @@ def history_for(conversation):
     ]
 
 
-def send_message(user, llm_model, text, conversation=None):
+def send_message(user, llm_model, text, conversation=None, include_memories=True):
     """Send `text` (plus the stored history) to the model and charge the reply.
 
     The proxy is called outside any transaction. If it fails, LLMError propagates
@@ -63,10 +63,15 @@ def send_message(user, llm_model, text, conversation=None):
 
     If `conversation` is deleted while the proxy call is in flight, the reply is
     still charged and ConversationDeleted is raised.
+
+    `include_memories` (the chat's "Include memories" switch) applies to this message
+    and is saved on the chat together with it; the Global System Prompt is always sent.
     """
     messages = history_for(conversation) + [{"role": "user", "content": text}]
-    # The Global System Prompt plus memories, read at send time (None when neither is set).
-    reply = llm.complete(llm_model, messages, system=system_text_for(user))
+    # The Global System Prompt plus (if switched on) memories, read at send time.
+    reply = llm.complete(
+        llm_model, messages, system=system_text_for(user, include_memories=include_memories)
+    )
 
     cost = reply_cost_micros(
         reply.input_tokens,
@@ -84,7 +89,7 @@ def send_message(user, llm_model, text, conversation=None):
                 deleted = True
             else:
                 conversation, user_message, assistant = _save_exchange(
-                    user, llm_model, text, conversation, reply, cost
+                    user, llm_model, text, conversation, reply, cost, include_memories
                 )
     except DatabaseError:
         # Backstop: the chat vanished between the check and the writes (the failed
@@ -103,7 +108,7 @@ def send_message(user, llm_model, text, conversation=None):
     return conversation
 
 
-def _save_exchange(user, llm_model, text, conversation, reply, cost):
+def _save_exchange(user, llm_model, text, conversation, reply, cost, include_memories=True):
     """Save both messages, charge the reply and bump the chat (inside the caller's
     transaction). Returns (conversation, user_message, assistant)."""
     if conversation is None:
@@ -112,6 +117,7 @@ def _save_exchange(user, llm_model, text, conversation, reply, cost):
             llm_model=llm_model,
             title=title_from(text),
             title_source=Conversation.TitleSource.PROVISIONAL,
+            include_memories=include_memories,
         )
     user_message = Message.objects.create(
         conversation=conversation, role=Message.Role.USER, content=text
@@ -135,5 +141,6 @@ def _save_exchange(user, llm_model, text, conversation, reply, cost):
         note=f"Reply in “{conversation.title}”",
         message=assistant,
     )
-    conversation.save(update_fields=["updated_at"])
+    conversation.include_memories = include_memories
+    conversation.save(update_fields=["updated_at", "include_memories"])
     return conversation, user_message, assistant

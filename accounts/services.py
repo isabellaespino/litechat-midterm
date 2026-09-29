@@ -15,14 +15,15 @@ def system_prompt_for(user):
     return get_settings(user).system_prompt.strip() or None
 
 
-def system_text_for(user):
-    """The system text sent with every message: the Global System Prompt, then the
-    user's memories as a list. None when neither is set (no system field at all)."""
+def system_text_for(user, include_memories=True):
+    """The system text sent with every message: the Global System Prompt, then (when
+    `include_memories`) the user's memories as a list. None when nothing is left, so no
+    system field is sent at all."""
     parts = []
     prompt = system_prompt_for(user)
     if prompt:
         parts.append(prompt)
-    memories = [m.text for m in user.memories.all()]
+    memories = [m.text for m in user.memories.all()] if include_memories else []
     if memories:
         parts.append(MEMORIES_HEADER + "\n" + "\n".join(f"- {text}" for text in memories))
     return "\n\n".join(parts) or None

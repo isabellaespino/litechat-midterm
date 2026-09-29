@@ -18,6 +18,9 @@ class Conversation(models.Model):
     )
     title = models.CharField(max_length=100, default="New chat")
     title_source = models.CharField(max_length=20, choices=TitleSource.choices, default=TitleSource.USER)
+    # Loop 8: whether this chat sends the user's memories (the Global System Prompt is
+    # always sent). On for new chats; existing chats default to on, as in loop 7.
+    include_memories = models.BooleanField(default=True)
     llm_model = models.ForeignKey(
         "catalog.LLMModel", on_delete=models.PROTECT, related_name="conversations"
     )
