@@ -12,7 +12,9 @@ from config.money import format_dollars
 from catalog.models import LLMModel
 from llm import LLMError, LLMReply
 
-from .models import Conversation, Message
+from django.utils.html import escape
+
+from .models import Conversation, Message, TitleGeneration
 from .services import send_message, title_from
 
 PASSWORD = "correct-horse-battery-9"
@@ -1364,3 +1366,355 @@ class SidebarDateTests(TestCase):
         self.assertIn("localizeTimes();", replace_sidebars)
         after_main_swap = script.split('$(".chat-main").innerHTML = data.main_html;')[1].split("\n")[1]
         self.assertIn("localizeTimes();", after_main_swap)
+
+
+class TitleGenerationAdminTests(TestCase):
+    def setUp(self):
+        from .models import TitleGeneration
+
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        gpt = make_gpt()
+        conversation = Conversation.objects.create(owner=self.user, llm_model=gpt, title="Trip")
+        TitleGeneration.objects.create(conversation=conversation, user=self.user, llm_model=gpt,
+                                       status="ok", title="Trip", input_tokens=150, output_tokens=8, cost_micros=91)
+        TitleGeneration.objects.create(conversation=None, user=self.user, llm_model=gpt,
+                                       status="failed", error_status=503)
+        self.row = TitleGeneration.objects.first()
+
+    def test_admin_list_shows_costs_and_total(self):
+        self.client.force_login(User.objects.create_superuser("root", password=PASSWORD))
+        page = self.client.get(reverse("admin:chat_titlegeneration_changelist"))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "total for the rows shown: $0.000091")
+        self.assertContains(page, "$0.000091")
+        self.assertContains(page, "(deleted)")
+        filtered = self.client.get(reverse("admin:chat_titlegeneration_changelist") + "?status__exact=failed")
+        self.assertContains(filtered, "total for the rows shown: $0.00")
+
+    def test_read_only_and_staff_only(self):
+        self.client.force_login(User.objects.create_superuser("root", password=PASSWORD))
+        self.assertEqual(self.client.get(reverse("admin:chat_titlegeneration_add")).status_code, 403)
+        change = reverse("admin:chat_titlegeneration_change", args=[self.row.pk])
+        self.assertEqual(self.client.post(change, {"title": "x"}).status_code, 403)
+        delete = reverse("admin:chat_titlegeneration_delete", args=[self.row.pk])
+        self.assertEqual(self.client.post(delete, {"post": "yes"}).status_code, 403)
+        self.client.force_login(self.user)  # not staff
+        response = self.client.get(reverse("admin:chat_titlegeneration_changelist"))
+        self.assertEqual(response.status_code, 302)
+
+
+# --- Automatic titles (loop 7) ------------------------------------------------------
+
+@override_settings(
+    OPENAI_API_KEY="test-openai-key",
+    ANTHROPIC_API_KEY="test-anthropic-key",
+    GOOGLE_API_KEY="test-google-key",
+)
+@mock.patch("llm.http.requests.post")
+class AutoTitleTests(TestCase):
+    def setUp(self):
+        from django.core.management import call_command
+
+        call_command("seed", stdout=mock.Mock())
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.client.force_login(self.user)
+
+    def start(self, post, provider="openai", api_model_id="gpt-5.6-luna", content="plan a trip to rome please"):
+        post.return_value = provider_reply(provider, text="Here is a plan for Rome.")
+        model = LLMModel.objects.get(api_model_id=api_model_id)
+        response = self.client.post(
+            reverse("chat_new"), {"llm_model": model.pk, "content": content}, HTTP_ACCEPT="application/json"
+        )
+        self.assertEqual(response.status_code, 200)
+        return Conversation.objects.latest("id")
+
+    def title(self, post, conversation, provider="openai", text="Trip to Rome.", **reply):
+        if text is not None:
+            post.return_value = provider_reply(provider, text=text, input_tokens=150, output_tokens=8, **reply)
+        return self.client.post(reverse("chat_title", args=[conversation.pk]), HTTP_ACCEPT="application/json")
+
+    def ledger_snapshot(self):
+        return (
+            Wallet.objects.get(user=self.user).balance_micros,
+            CreditTransaction.objects.filter(user=self.user).count(),
+        )
+
+    def test_first_send_is_unchanged_and_provisional(self, post):
+        conversation = self.start(post)
+        self.assertEqual(post.call_count, 1)  # the send doesn't request a title itself
+        self.assertEqual(conversation.title, "plan a trip to rome please")
+        self.assertEqual(conversation.title_source, "provisional")
+        header = main_region(self.client.get(reverse("chat_detail", args=[conversation.pk])))
+        self.assertIn('data-title-source="provisional"', header)
+
+    def test_success_for_each_provider_uses_the_chats_own_model(self, post):
+        from accounts.services import get_settings
+
+        settings_row = get_settings(self.user)
+        settings_row.system_prompt = "Always reply in French, I'm a student."
+        settings_row.save()
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                conversation = self.start(post, provider, api_model_id, content=f"{provider} trip question")
+                before = self.ledger_snapshot()
+                response = self.title(post, conversation, provider)
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertEqual((data["changed"], data["title"]), (True, "Trip to Rome"))
+                self.assertIn("Trip to Rome", data["sidebar_html"])
+                self.assertNotIn("balance", data)
+                conversation.refresh_from_db()
+                self.assertEqual((conversation.title, conversation.title_source), ("Trip to Rome", "auto"))
+
+                args, kwargs = post.call_args
+                self.assertIn(f"/{provider}/", args[0])  # the chat's own provider
+                self.assertEqual(kwargs["timeout"], 20)
+                body = kwargs["json"]
+                self.assertIsNone(sent_system_prompt(provider, body))  # no prompt or memories
+                self.assertNotIn("student", str(body))
+                cap = {"openai": lambda b: b["max_tokens"], "anthropic": lambda b: b["max_tokens"],
+                       "google": lambda b: b["generationConfig"]["maxOutputTokens"]}[provider](body)
+                self.assertEqual(cap, 20)
+                self.assertIn("3 to 6 words", str(body))
+                self.assertIn(f"{provider} trip question", str(body))
+
+                row = TitleGeneration.objects.get(conversation=conversation)
+                model = LLMModel.objects.get(api_model_id=api_model_id)
+                self.assertEqual(row.status, "ok")
+                self.assertEqual((row.input_tokens, row.output_tokens), (150, 8))
+                self.assertEqual(row.cost_micros, reply_cost_micros(150, 8, model.input_price_micros_per_mtok, model.output_price_micros_per_mtok))
+                self.assertEqual(self.ledger_snapshot(), before)  # free for the user
+
+    def test_free_and_invisible_on_every_user_page(self, post):
+        conversation = self.start(post)
+        profile_before = self.client.get(reverse("profile")).context
+        spent_before = profile_before["total_spent"]
+        self.title(post, conversation)
+        profile = self.client.get(reverse("profile"))
+        self.assertEqual(profile.context["total_spent"], spent_before)
+        self.assertEqual(profile.context["deleted_spent"], 0)
+        per_chat = sum(c.total_cost or 0 for c in profile.context["page"])
+        self.assertEqual(per_chat + profile.context["deleted_spent"], profile.context["total_spent"])
+        wallet = Wallet.objects.get(user=self.user).balance_micros
+        self.assertEqual(profile.context["total_added"] - profile.context["total_spent"], wallet)
+        cost = TitleGeneration.objects.get().cost_micros
+        from config.money import format_dollars_precise
+
+        for url in (reverse("profile"), reverse("chat_detail", args=[conversation.pk]), reverse("home")):
+            with self.subTest(url=url):
+                html = self.client.get(url).content.decode()
+                self.assertNotIn(format_dollars_precise(cost), html)
+                self.assertNotIn("title generation", html.lower())
+
+    def test_attempted_regardless_of_balance(self, post):
+        conversation = self.start(post)
+        Wallet.objects.filter(user=self.user).update(balance_micros=-500)
+        before = self.ledger_snapshot()
+        self.assertEqual(self.title(post, conversation).status_code, 200)
+        self.assertEqual(self.ledger_snapshot(), before)
+        self.assertEqual(TitleGeneration.objects.get().status, "ok")
+
+    def test_proxy_failure_keeps_provisional_and_never_retries(self, post):
+        for status, expected in ((500, 502), (429, 503)):
+            with self.subTest(status=status):
+                conversation = self.start(post, content=f"failure case {status}")
+                before = self.ledger_snapshot()
+                post.return_value = proxy_status(status)
+                response = self.title(post, conversation, text=None)
+                self.assertEqual(response.status_code, expected)
+                conversation.refresh_from_db()
+                self.assertEqual((conversation.title, conversation.title_source), (f"failure case {status}", "failed"))
+                row = TitleGeneration.objects.get(conversation=conversation)
+                self.assertEqual((row.status, row.cost_micros, row.error_status), ("failed", 0, expected))
+                self.assertEqual(self.ledger_snapshot(), before)
+                calls = post.call_count
+                self.assertEqual(self.title(post, conversation).status_code, 409)  # no retry
+                self.assertEqual(post.call_count, calls)
+
+    def test_unusable_answer_is_logged_with_cost_but_not_charged(self, post):
+        for text in ("", ".", "Title", "  \n  "):
+            with self.subTest(text=repr(text)):
+                conversation = self.start(post, content=f"unusable {text!r} case")
+                before = self.ledger_snapshot()
+                response = self.title(post, conversation, text=text)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["changed"], False)
+                conversation.refresh_from_db()
+                self.assertTrue(conversation.title.startswith("unusable"))
+                row = TitleGeneration.objects.get(conversation=conversation)
+                self.assertEqual(row.status, "unusable")
+                self.assertGreater(row.cost_micros, 0)
+                self.assertEqual(self.ledger_snapshot(), before)
+
+    def test_rename_before_and_during_the_call(self, post):
+        renamed = self.start(post, content="renamed first")
+        self.client.post(reverse("chat_rename", args=[renamed.pk]), {"title": "Mine"})
+        calls = post.call_count
+        self.assertEqual(self.title(post, renamed).status_code, 409)
+        self.assertEqual(post.call_count, calls)  # no proxy call
+        self.assertFalse(TitleGeneration.objects.filter(conversation=renamed).exists())
+
+        racing = self.start(post, content="renamed during")
+
+        def rename_then_reply(*args, **kwargs):
+            self.client.post(reverse("chat_rename", args=[racing.pk]), {"title": "My own title"})
+            return provider_reply("openai", text="Generated title", input_tokens=150, output_tokens=8)
+
+        post.side_effect = rename_then_reply
+        response = self.title(post, racing, text=None)
+        post.side_effect = None
+        self.assertEqual(response.status_code, 409)
+        racing.refresh_from_db()
+        self.assertEqual((racing.title, racing.title_source), ("My own title", "user"))
+        row = TitleGeneration.objects.get(conversation=racing)
+        self.assertEqual(row.status, "superseded")
+        self.assertGreater(row.cost_micros, 0)
+
+    def test_delete_during_the_call(self, post):
+        conversation = self.start(post, content="deleted during")
+        before = self.ledger_snapshot()
+
+        def delete_then_reply(*args, **kwargs):
+            Conversation.objects.filter(pk=conversation.pk).delete()
+            return provider_reply("openai", text="Generated title", input_tokens=150, output_tokens=8)
+
+        post.side_effect = delete_then_reply
+        response = self.title(post, conversation, text=None)
+        post.side_effect = None
+        self.assertEqual(response.status_code, 404)
+        row = TitleGeneration.objects.get()
+        self.assertEqual((row.status, row.conversation_id), ("chat_deleted", None))
+        self.assertEqual(self.ledger_snapshot(), before)
+
+    def test_double_request_and_access_rules(self, post):
+        conversation = self.start(post)
+        Conversation.objects.filter(pk=conversation.pk).update(title_source="generating")
+        calls = post.call_count
+        self.assertEqual(self.title(post, conversation).status_code, 409)
+        self.assertEqual(post.call_count, calls)
+
+        old = Conversation.objects.create(owner=self.user, llm_model=conversation.llm_model, title="Old chat")
+        self.assertEqual(old.title_source, "user")  # chats that predate titles aren't retitled
+        self.assertEqual(self.title(post, old).status_code, 409)
+
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        theirs = Conversation.objects.create(owner=bob, llm_model=conversation.llm_model, title_source="provisional")
+        self.assertEqual(self.title(post, theirs).status_code, 404)
+        self.assertEqual(
+            self.client.get(reverse("chat_title", args=[conversation.pk]), HTTP_ACCEPT="application/json").status_code, 405
+        )
+        self.client.logout()
+        self.assertEqual(self.title(post, conversation).status_code, 401)
+
+    def test_titles_render_escaped(self, post):
+        conversation = self.start(post)
+        self.title(post, conversation, text="<b>Bold</b> & co")
+        conversation.refresh_from_db()
+        page = self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode()
+        self.assertIn(escape(conversation.title), page)
+        self.assertNotIn("<b>Bold</b>", page)
+
+    def test_script_hooks(self, post):
+        conversation = self.start(post)
+        page = self.client.get(reverse("chat_detail", args=[conversation.pk])).content.decode()
+        script = page.split("<script data-chat-script>")[1].split("</script>")[0]
+        self.assertIn("function requestTitle(chatUrl)", script)
+        self.assertIn('"X-CSRFToken": token.value', script)
+        after_swap = script.split('$(".chat-main").innerHTML = data.main_html;')[1].split("} else {")[0]
+        self.assertIn("requestTitle(data.chat_url);", after_swap)
+        self.assertIn("[data-title-source='provisional']", script)
+        title_fn = script.split("function requestTitle(chatUrl) {")[1].split("function send(form)")[0]
+        self.assertNotIn("updateBalance", title_fn)
+
+
+class CleanTitleTests(TestCase):
+    def test_cleaning(self):
+        from .titles import clean_title
+
+        cases = {
+            '"Trip to Rome"': "Trip to Rome",
+            "“Trip to Rome”": "Trip to Rome",
+            "**Trip to Rome**": "Trip to Rome",
+            "# Trip to Rome": "Trip to Rome",
+            "Title: Trip to Rome": "Trip to Rome",
+            "Trip to Rome.": "Trip to Rome",
+            "  Trip   to\tRome  ": "Trip to Rome",
+            "\n\nTrip to Rome\nSecond line": "Trip to Rome",
+            "x" * 80: "x" * 59 + "…",
+            "": "", ".": "", "Title": "", "untitled": "", "***": "",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw[:20]):
+                self.assertEqual(clean_title(raw), expected)
+
+
+# --- Memories in every chat (loop 7) ------------------------------------------------
+
+@override_settings(
+    OPENAI_API_KEY="test-openai-key",
+    ANTHROPIC_API_KEY="test-anthropic-key",
+    GOOGLE_API_KEY="test-google-key",
+)
+@mock.patch("llm.http.requests.post")
+class MemoriesInChatTests(TestCase):
+    BLOCK = "About the user (notes they asked you to remember):\n- I'm a student\n- keep answers short"
+
+    def setUp(self):
+        from django.core.management import call_command
+
+        from accounts.models import Memory
+
+        call_command("seed", stdout=mock.Mock())
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.client.force_login(self.user)
+        Memory.objects.create(user=self.user, text="I'm a student")
+        Memory.objects.create(user=self.user, text="keep answers short")
+
+    def send(self, post, provider, api_model_id):
+        post.return_value = provider_reply(provider)
+        model = LLMModel.objects.get(api_model_id=api_model_id)
+        self.assertEqual(
+            self.client.post(reverse("chat_new"), {"llm_model": model.pk, "content": "Hello"}).status_code, 302
+        )
+        return post.call_args.kwargs["json"]
+
+    def test_memories_only_for_each_provider(self, post):
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                self.assertEqual(sent_system_prompt(provider, self.send(post, provider, api_model_id)), self.BLOCK)
+
+    def test_prompt_then_memories_for_each_provider(self, post):
+        from accounts.services import get_settings
+
+        row = get_settings(self.user)
+        row.system_prompt = "Always reply in French."
+        row.save()
+        for provider, api_model_id, _ in PROVIDER_MODELS:
+            with self.subTest(provider=provider):
+                body = self.send(post, provider, api_model_id)
+                self.assertEqual(sent_system_prompt(provider, body), "Always reply in French.\n\n" + self.BLOCK)
+
+    def test_read_at_send_time_and_isolated(self, post):
+        from accounts.models import Memory
+
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        Memory.objects.create(user=bob, text="Bob's secret note")
+        body = self.send(post, "anthropic", "claude-haiku-4-5-20251001")
+        self.assertNotIn("Bob's secret", str(body))
+        conversation = Conversation.objects.get()
+        Memory.objects.filter(user=self.user).delete()
+        post.return_value = provider_reply("anthropic")
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Again"})
+        self.assertNotIn("system", post.call_args.kwargs["json"])  # nothing left to send
+
+    def test_title_call_never_carries_memories(self, post):
+        body = self.send(post, "google", "gemini-3.8-flash")
+        self.assertEqual(sent_system_prompt("google", body), self.BLOCK)
+        conversation = Conversation.objects.get()
+        post.return_value = provider_reply("google", text="Greetings", input_tokens=150, output_tokens=8)
+        response = self.client.post(reverse("chat_title", args=[conversation.pk]), HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        title_body = post.call_args.kwargs["json"]
+        self.assertNotIn("systemInstruction", title_body)
+        self.assertNotIn("student", str(title_body))

@@ -26,14 +26,16 @@ def require_key(value, name):
     return value
 
 
-def post_json(provider, api_model_id, url, headers, body):
+def post_json(provider, api_model_id, url, headers, body, timeout=None):
     """POST `body` to the proxy and return the decoded JSON, or raise LLMError.
+
+    `timeout` defaults to LLM_TIMEOUT_SECONDS (120 s, for replies).
 
     Logs the proxy's status and the model id, never the headers, the key or the body.
     """
     try:
         response = requests.post(
-            url, json=body, headers=headers, timeout=settings.LLM_TIMEOUT_SECONDS
+            url, json=body, headers=headers, timeout=timeout or settings.LLM_TIMEOUT_SECONDS
         )
     except (requests.Timeout, requests.ConnectionError) as exc:
         logger.warning("%s proxy unreachable for %s: %s", provider, api_model_id, type(exc).__name__)

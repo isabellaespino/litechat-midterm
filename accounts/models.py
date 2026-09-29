@@ -24,3 +24,25 @@ class UserSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.user}"
+
+MEMORY_MAX_COUNT = 10
+MEMORY_MAX_CHARS = 200
+
+
+class Memory(models.Model):
+    """A short note the user asked every model to remember (loop 7).
+
+    Sent with the Global System Prompt in every chat, so the count and length are
+    capped: they're billed as input tokens on every message. Only the user adds them.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="memories")
+    text = models.CharField(max_length=MEMORY_MAX_CHARS)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        verbose_name_plural = "memories"
+
+    def __str__(self):
+        return self.text

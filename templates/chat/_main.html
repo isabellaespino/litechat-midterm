@@ -1,5 +1,5 @@
 <details class="mobile-chats"><summary>Chats</summary>{% include "chat/_sidebar.html" %}</details>
-<header class="chat-header">
+<header class="chat-header"{% if conversation %} data-title-source="{{ conversation.title_source }}"{% endif %}>
   <h1>{% if conversation %}{{ conversation.title }}{% else %}New chat{% endif %}</h1>
   {% if conversation %}
     <details class="rename"{% if rename_open %} open{% endif %}>

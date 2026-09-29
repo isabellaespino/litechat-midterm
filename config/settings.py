@@ -165,6 +165,9 @@ CHAT_MESSAGE_MAX_CHARS = 8000
 # Billing. All money is stored as whole micro-dollars (1 USD = 1_000_000).
 SIGNUP_CREDIT_MICROS = 2_000_000
 MAX_OUTPUT_TOKENS = 1024
+# Automatic chat titles (loop 7): a small, quick call; the app pays for it.
+TITLE_MAX_OUTPUT_TOKENS = 20
+TITLE_TIMEOUT_SECONDS = 20
 
 
 # Tests must never reach the network.

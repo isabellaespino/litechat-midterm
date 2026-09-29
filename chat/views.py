@@ -16,6 +16,7 @@ from llm import LLMError
 
 from .forms import MessageForm, NewChatForm, RenameForm
 from .models import Conversation
+from . import titles
 from .services import ConversationDeleted, send_message
 
 TEMPLATE = "chat/layout.html"
@@ -225,7 +226,9 @@ def chat_rename(request, pk):
         )
         return render(request, TEMPLATE, context, status=400)
     # update() leaves updated_at alone, so renaming doesn't reorder the sidebar.
-    Conversation.objects.filter(pk=conversation.pk).update(title=form.cleaned_data["title"])
+    Conversation.objects.filter(pk=conversation.pk).update(
+        title=form.cleaned_data["title"], title_source=Conversation.TitleSource.USER
+    )
     return redirect("chat_detail", pk=conversation.pk)
 
 
@@ -243,3 +246,32 @@ def chat_delete(request, pk):
         messages.success(request, "Chat deleted.")
         return redirect("chat_list")
     return render(request, "chat/confirm_delete.html", {"conversation": conversation})
+
+
+@chat_login_required
+@require_POST
+def chat_title(request, pk):
+    """Ask the chat's own model for an automatic title (called by the script).
+
+    JSON only. Free to the user: nothing is charged and the response has no balance.
+    Not gated on credit: every new chat gets an attempt (loop 7, decision #1).
+    """
+    conversation = (
+        Conversation.objects.select_related("llm_model", "owner")
+        .filter(pk=pk, owner=request.user)
+        .first()
+    )
+    if conversation is None:
+        return JsonResponse({"error": "Chat not found."}, status=404)
+    result, detail = titles.generate_title(conversation)
+    if result == titles.OK:
+        return JsonResponse(
+            {"changed": True, "title": detail, "sidebar_html": sidebar_html(request, conversation)}
+        )
+    if result == titles.UNUSABLE:
+        return JsonResponse({"changed": False, "title": conversation.title})
+    if result == titles.FAILED:
+        return JsonResponse({"error": detail.message}, status=detail.status)
+    if result == titles.DELETED:
+        return JsonResponse({"error": "This chat was deleted."}, status=404)
+    return JsonResponse({"error": "This chat's title isn't waiting for an automatic title."}, status=409)

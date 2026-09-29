@@ -414,3 +414,38 @@ class NoNetworkGuardTests(SimpleTestCase):
     def test_real_http_is_blocked(self):
         with self.assertRaisesMessage(RuntimeError, "Real HTTP request attempted"):
             requests.get("https://example.com")
+
+
+def output_cap(case, body):
+    return {
+        "openai": lambda b: b["max_tokens"],
+        "anthropic": lambda b: b["max_tokens"],
+        "google": lambda b: b["generationConfig"]["maxOutputTokens"],
+    }[case["name"]](body)
+
+
+@override_settings(**TEST_KEYS)
+@mock.patch("llm.http.requests.post")
+class PerCallLimitsTests(SimpleTestCase):
+    def test_defaults_are_reply_settings(self, post):
+        for case in PROVIDER_CASES:
+            with self.subTest(provider=case["name"]):
+                post.return_value = proxy_response(json_body=case["ok_body"]())
+                case["complete"](case["model"], MESSAGES)
+                self.assertEqual(output_cap(case, post.call_args.kwargs["json"]), 1024)
+                self.assertEqual(post.call_args.kwargs["timeout"], 120)
+
+    def test_overrides_reach_each_provider(self, post):
+        for case in PROVIDER_CASES:
+            with self.subTest(provider=case["name"]):
+                post.return_value = proxy_response(json_body=case["ok_body"]())
+                case["complete"](case["model"], MESSAGES, max_output_tokens=20, timeout=20)
+                self.assertEqual(output_cap(case, post.call_args.kwargs["json"]), 20)
+                self.assertEqual(post.call_args.kwargs["timeout"], 20)
+
+    def test_dispatch_passes_overrides(self, post):
+        post.return_value = proxy_response(json_body=anthropic_body())
+        claude = LLMModel(provider="anthropic", api_model_id="claude-haiku-4-5-20251001")
+        complete(claude, MESSAGES, max_output_tokens=20, timeout=20)
+        self.assertEqual(post.call_args.kwargs["json"]["max_tokens"], 20)
+        self.assertEqual(post.call_args.kwargs["timeout"], 20)

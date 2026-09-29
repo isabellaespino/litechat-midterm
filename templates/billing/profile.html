@@ -27,6 +27,40 @@
     <p><button type="submit" class="btn">Save</button></p>
   </form>
 
+  <h2 id="memories">Memories <span class="muted count">{{ memories|length }} of {{ memory_max }}</span></h2>
+  <div class="card memories">
+    <p class="muted">Short notes about you that every model sees, e.g. “I'm a student” or “keep answers short”.
+      Sent with every message, so they count toward input tokens.</p>
+    {% if memories %}
+      <ul class="memory-list">
+        {% for memory in memories %}
+          <li>
+            <span class="memory-text">{{ memory.text }}</span>
+            <form method="post" action="{% url 'memory_delete' memory.pk %}">
+              {% csrf_token %}
+              <button type="submit" class="btn secondary small" aria-label="Delete memory “{{ memory.text }}”">Delete</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if memories|length < memory_max %}
+      <form method="post" action="{% url 'memory_add' %}" class="memory-add">
+        {% csrf_token %}
+        <label for="id_text" class="sr-only">Add a memory</label>
+        {{ memory_form.text }}
+        <button type="submit" class="btn">Add</button>
+      </form>
+    {% else %}
+      <p class="muted">Delete a memory to add another.</p>
+    {% endif %}
+    {% for e in memory_form.text.errors %}<p class="field-error" role="alert">{{ e }}</p>{% endfor %}
+  </div>
+  {% if system_tokens %}
+    <p class="muted small system-estimate">Your system prompt and memories add about {{ system_tokens }} tokens to every message
+      ({% for name, micros in system_cost_estimates %}≈ {{ micros|dollars_precise }} with {{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}). Estimate.</p>
+  {% endif %}
+
   <h2>Usage by chat</h2>
   {% if page.object_list %}
     {% for c in page %}

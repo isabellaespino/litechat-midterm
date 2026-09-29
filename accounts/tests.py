@@ -176,3 +176,113 @@ class AuthCardTests(TestCase):
             "Log in", reverse("login"), status=400,
         )
         self.assertIn('<p class="field-error" role="alert">', html.split('<div class="auth-card">')[1])
+
+
+class MemoryTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.client.force_login(self.user)
+        self.add_url = reverse("memory_add")
+
+    def memories(self, user=None):
+        from .models import Memory
+
+        return list(Memory.objects.filter(user=user or self.user).values_list("text", flat=True))
+
+    def test_add_and_list(self):
+        response = self.client.post(self.add_url, {"text": "  I'm a student  "})
+        self.assertRedirects(response, reverse("profile") + "#memories", fetch_redirect_response=False)
+        self.assertEqual(self.memories(), ["I'm a student"])
+        page = self.client.get(reverse("profile"))
+        self.assertContains(page, "Memory added.")
+        self.assertContains(page, '<span class="memory-text">I&#x27;m a student</span>', html=True)
+        self.assertContains(page, "1 of 10")
+        self.assertContains(page, 'aria-label="Delete memory “I&#x27;m a student”"')
+
+    def test_validation_is_400_and_stores_nothing(self):
+        from .models import Memory
+
+        self.client.post(self.add_url, {"text": "Keep answers short"})
+        for text, message in [
+            ("", "This field is required."),
+            ("   ", "This field is required."),
+            ("x" * 201, "at most 200 characters"),
+            ("keep ANSWERS short", "You already have that memory."),
+        ]:
+            with self.subTest(text=text[:10]):
+                response = self.client.post(self.add_url, {"text": text})
+                self.assertEqual(response.status_code, 400)
+                self.assertContains(response, message, status_code=400)
+                self.assertContains(response, "Available credit", status_code=400)  # the full profile
+        self.assertEqual(self.memories(), ["Keep answers short"])
+
+        for i in range(9):
+            Memory.objects.create(user=self.user, text=f"note {i}")
+        response = self.client.post(self.add_url, {"text": "an eleventh"})
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "You can keep up to 10 memories. Delete one to add another.", status_code=400)
+        self.assertEqual(len(self.memories()), 10)
+        page = self.client.get(reverse("profile"))
+        self.assertContains(page, "Delete a memory to add another.")
+        self.assertNotContains(page, f'action="{self.add_url}"')
+
+    def test_delete_is_immediate_and_owner_only(self):
+        from .models import Memory
+
+        mine = Memory.objects.create(user=self.user, text="I'm a student")
+        bob = User.objects.create_user("bob", password=PASSWORD)
+        theirs = Memory.objects.create(user=bob, text="Bob's note")
+        self.assertEqual(self.client.get(reverse("memory_delete", args=[mine.pk])).status_code, 405)
+        response = self.client.post(reverse("memory_delete", args=[mine.pk]))
+        self.assertRedirects(response, reverse("profile") + "#memories", fetch_redirect_response=False)
+        self.assertEqual(self.memories(), [])
+        self.assertEqual(self.client.post(reverse("memory_delete", args=[theirs.pk])).status_code, 404)
+        self.assertEqual(self.memories(bob), ["Bob's note"])
+        self.client.logout()
+        response = self.client.post(self.add_url, {"text": "x"})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("login")))
+
+    def test_system_text(self):
+        from .models import Memory
+        from .services import get_settings, system_text_for
+
+        self.assertIsNone(system_text_for(self.user))
+        Memory.objects.create(user=self.user, text="I'm a student")
+        Memory.objects.create(user=self.user, text="keep answers short")
+        memories_block = "About the user (notes they asked you to remember):\n- I'm a student\n- keep answers short"
+        self.assertEqual(system_text_for(self.user), memories_block)
+        row = get_settings(self.user)
+        row.system_prompt = "Always reply in French."
+        row.save()
+        self.assertEqual(system_text_for(self.user), "Always reply in French.\n\n" + memories_block)
+        Memory.objects.filter(user=self.user).delete()
+        self.assertEqual(system_text_for(self.user), "Always reply in French.")
+
+    def test_estimate_shown_only_when_something_is_sent(self):
+        from django.core.management import call_command
+
+        from .models import Memory
+
+        call_command("seed", stdout=open("/dev/null", "w"))
+        page = self.client.get(reverse("profile"))
+        self.assertNotContains(page, "add about")
+        spent_before = page.context["total_spent"]
+        Memory.objects.create(user=self.user, text="x" * 150)
+        # header (50) + newline + "- " + 150 = 203 chars -> ceil(203 / 4) = 51 tokens
+        page = self.client.get(reverse("profile"))
+        self.assertEqual(page.context["system_tokens"], 51)
+        self.assertContains(page, "add about 51 tokens to every message")
+        self.assertContains(page, "≈ $0.000051 with Claude Haiku")  # 51 x $1.00/1M
+        self.assertContains(page, "≈ $0.000026 with GPT-5.6 Luna")  # 51 x $0.50/1M = 25.5 -> 26
+        self.assertContains(page, "≈ $0.000016 with Gemini Flash")  # 51 x $0.30/1M = 15.3 -> 16
+        self.assertEqual(page.context["total_spent"], spent_before)
+
+    def test_admin_shows_memories_read_only(self):
+        from .models import Memory
+
+        Memory.objects.create(user=self.user, text="I'm a student")
+        self.client.force_login(User.objects.create_superuser("root", password=PASSWORD))
+        page = self.client.get(reverse("admin:auth_user_change", args=[self.user.pk]))
+        self.assertContains(page, "Memories")
+        self.assertContains(page, "I&#x27;m a student")

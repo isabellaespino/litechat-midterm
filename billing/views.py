@@ -6,7 +6,7 @@ from django.shortcuts import render
 from chat.models import Conversation, Message
 
 from .models import CreditTransaction
-from .services import get_wallet
+from .services import get_wallet, reply_cost_micros
 
 CHATS_PER_PAGE = 20
 
@@ -18,8 +18,10 @@ def profile(request):
 
 def render_profile(request, status=200, **extra):
     """My Profile. Also used to re-show the page with a 400 from the system prompt form."""
-    from accounts.forms import SystemPromptForm
-    from accounts.services import get_settings
+    from accounts.forms import MemoryForm, SystemPromptForm
+    from accounts.models import MEMORY_MAX_COUNT
+    from accounts.services import estimated_system_tokens, get_settings
+    from catalog.models import LLMModel
 
     user = request.user
     ledger = user.credit_transactions.all()
@@ -54,6 +56,8 @@ def render_profile(request, status=200, **extra):
         replies.setdefault(message.conversation_id, []).append(message)
     for conversation in page:
         conversation.replies = replies.get(conversation.pk, [])
+    # What the system prompt + memories add to every message (an estimate, not a charge).
+    system_tokens = estimated_system_tokens(user)
 
     return render(
         request,
@@ -66,6 +70,14 @@ def render_profile(request, status=200, **extra):
             "credit_added": ledger.exclude(kind=charge),
             "deleted_replies": deleted["count"],
             "deleted_spent": -(deleted["total"] or 0),
+            "memories": user.memories.all(),
+            "memory_max": MEMORY_MAX_COUNT,
+            "memory_form": extra.pop("memory_form", MemoryForm(user=user)),
+            "system_tokens": system_tokens,
+            "system_cost_estimates": [
+                (m.display_name, reply_cost_micros(system_tokens, 0, m.input_price_micros_per_mtok, m.output_price_micros_per_mtok))
+                for m in LLMModel.objects.filter(is_active=True)
+            ] if system_tokens else [],
             "system_prompt_form": extra.pop(
                 "system_prompt_form",
                 SystemPromptForm(initial={"system_prompt": get_settings(user).system_prompt}),
