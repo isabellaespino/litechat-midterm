@@ -1,16 +1,21 @@
-# Litechat
+# Chat4All
+
+Chat4All replicates the core functionality of [Litechat](https://litechat.ai): metered,
+pay-as-you-go access to LLMs from several providers, for people who won't pay for a
+subscription.
 
 Pay-as-you-go AI chat for people who don't want a subscription. Each user has a
 prepaid US dollar balance that admins top up in Django admin.
 Users pick a model from OpenAI, Anthropic or Google, and each reply is charged by
 the tokens it uses. Built with Django, SQLite and server-rendered templates.
 
-> **Status: loop 5.** Chat works end to end with all three models: GPT-5.6 Luna
+> **Status: loop 6.** Chat works end to end with all three models: GPT-5.6 Luna
 > (OpenAI), Claude Haiku (Anthropic) and Gemini Flash (Google). It uses a chatbot-style
 > layout, and each reply is charged from its token usage at that model's price. Usage
 > and costs are shown on **My Profile**, which also holds an optional **Global System
 > Prompt**. Replies render Markdown safely, chats can be deleted, and the sidebar shows
-> each chat's date.
+> each chat's date. The app has a navy-and-gold design and a landing page with a price
+> snapshot.
 
 ## Requirements
 
@@ -63,7 +68,12 @@ shows "unavailable" (503) and charges nothing, and the other models keep working
 
 ## Using the app
 
-- **Sign up** from the nav bar. Every new account starts with **$2.00** of credit.
+- **The landing page** (`/`) explains how Chat4All works and shows a **price snapshot**:
+  for each active model, its price and an **estimate** of how many messages $2.00 buys.
+  The estimate assumes a message of about 500 input tokens and a 300-token reply in a
+  new chat, and uses the same rounding as real charges. Longer chats cost more per reply.
+- **Sign up** from the nav bar or the landing page's **Get started**. Every new account
+  starts with **$2.00** of credit.
 - **Models** lists the available models, grouped by provider, with their prices per
   1M tokens.
 - **Chats** opens your most recent chat (or a new one). The sidebar lists your chats,

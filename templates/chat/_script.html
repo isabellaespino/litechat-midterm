@@ -154,7 +154,7 @@
         localizeTimes(); // the swapped-in main column holds the mobile copy of the sidebar
         history.pushState({}, "", data.chat_url);
         var title = $(".chat-header h1");
-        if (title) document.title = title.textContent + " · Litechat";
+        if (title) document.title = title.textContent + " · Chat4All";
       } else {
         inner.insertAdjacentHTML("beforeend", data.messages_html);
         setBusy(form, false);

@@ -1,12 +1,86 @@
 {% extends "base.html" %}
-{% block title %}Home{% endblock %}
+{% load money %}
+{% block title %}AI for everyone{% endblock %}
+{% block body_class %}landing{% endblock %}
+{% block main_class %}landing-main{% endblock %}
 {% block content %}
-  <h1>Pay-as-you-go AI chat</h1>
-  <p>Chat with models from OpenAI, Anthropic and Google without a subscription.
-     You pay only for what you use: each reply is charged by the tokens it uses,
-     from a prepaid credit balance.</p>
-  <p>
-    {% if user.is_authenticated %}<a class="btn" href="{% url 'chat_new' %}">Start a chat</a>{% else %}<a class="btn" href="{% url 'signup' %}">Sign up</a>{% endif %}
-    <a href="{% url 'model_list' %}">Browse models</a>
-  </p>
+  <section class="hero">
+    <div class="hero-inner">
+      {# Original emblem: a shield with a speech bubble. No real superhero symbols. #}
+      <svg class="emblem" viewBox="0 0 120 140" width="120" height="140" role="img" aria-label="Chat4All emblem">
+        <path class="shield-body" d="M60 6 L108 24 V66 C108 100 86 124 60 134 C34 124 12 100 12 66 V24 Z"/>
+        <path class="shield-shine" d="M60 18 L96 32 V66 C96 92 80 111 60 120 Z"/>
+        <rect class="bubble-shape" x="32" y="44" width="56" height="38" rx="12"/>
+        <path class="bubble-shape" d="M46 80 L44 96 L60 81 Z"/>
+        <circle class="bubble-dot" cx="47" cy="63" r="4.5"/>
+        <circle class="bubble-dot" cx="60" cy="63" r="4.5"/>
+        <circle class="bubble-dot" cx="73" cy="63" r="4.5"/>
+      </svg>
+      <div>
+        <p class="eyebrow">Chat4All</p>
+        <h1>Your everyday hero for AI.</h1>
+        <p class="lead">Chat4All gives everyone access to top AI models, with no subscription: you only pay for each reply.</p>
+        <p class="actions">
+          {% if user.is_authenticated %}
+            <a class="btn cta" href="{% url 'chat_new' %}">Start a chat</a>
+          {% else %}
+            <a class="btn cta" href="{% url 'signup' %}">Get started</a>
+          {% endif %}
+          <a class="link" href="{% url 'model_list' %}">See all models</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li class="step">
+        <span class="step-number" aria-hidden="true">1</span>
+        <h3>Sign up and get {{ budget_micros|dollars }} free</h3>
+        <p>New accounts start with {{ budget_micros|dollars }} of credit. No card needed.</p>
+      </li>
+      <li class="step">
+        <span class="step-number" aria-hidden="true">2</span>
+        <h3>Pick a model from OpenAI, Anthropic or Google</h3>
+        <p>Choose the one that suits the job, and switch any time you start a new chat.</p>
+      </li>
+      <li class="step">
+        <span class="step-number" aria-hidden="true">3</span>
+        <h3>Pay only for each reply</h3>
+        <p>A typical reply costs a fraction of a cent, and there's no monthly fee.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="section">
+    <h2>What {{ budget_micros|dollars }} gets you</h2>
+    {% if models %}
+      <table class="snapshot">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Price per 1M tokens (in / out)</th>
+            <th class="num">≈ per message (estimate)</th>
+            <th class="num">≈ messages for {{ budget_micros|dollars }} (estimate)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in models %}
+            <tr>
+              <td data-label="Model"><strong>{{ model.display_name }}</strong> <span class="muted">· {{ model.get_provider_display }}</span> <span class="badge">{{ model.get_tier_display }}</span></td>
+              <td data-label="Price per 1M tokens">{{ model.input_price_micros_per_mtok|dollars_precise }} / {{ model.output_price_micros_per_mtok|dollars_precise }}</td>
+              <td data-label="≈ per message" class="num">{% if model.per_message %}{{ model.per_message|dollars_precise }}{% else %}—{% endif %}</td>
+              <td data-label="≈ messages for {{ budget_micros|dollars }}" class="num"><strong>{{ model.messages_display }}</strong></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted small">These are estimates. They assume a message of about {{ assumed_input_tokens }} input tokens
+        and a {{ assumed_output_tokens }}-token reply, in a new chat. Longer chats resend earlier messages, so each reply
+        costs more. You're always charged for the real token count. <a href="{% url 'model_list' %}">Compare models</a>.</p>
+    {% else %}
+      <p class="muted">No models are available yet.</p>
+    {% endif %}
+  </section>
 {% endblock %}

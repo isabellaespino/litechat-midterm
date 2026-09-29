@@ -5,6 +5,10 @@ from accounts import views as account_views
 
 from . import views
 
+admin.site.site_header = "Chat4All administration"
+admin.site.site_title = "Chat4All admin"
+admin.site.index_title = "Site administration"
+
 urlpatterns = [
     path("", views.home, name="home"),
     path("accounts/", include("accounts.urls")),
