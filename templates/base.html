@@ -47,7 +47,8 @@
     /* Chat app: full-height sidebar + thread + pinned composer */
     body.app-page { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
     body.app-page > nav { flex: none; }
-    main.chat-app { flex: 1; min-height: 0; max-width: none; padding: 0; display: grid; grid-template-columns: 260px 1fr; }
+    /* width/margin: in the flex-column body, the base "margin: 0 auto" would shrink main to its content. */
+    main.chat-app { flex: 1; min-height: 0; width: 100%; max-width: none; margin: 0; padding: 0; display: grid; grid-template-columns: 260px 1fr; }
     .sidebar { border-right: 1px solid var(--line); background: var(--card); overflow-y: auto; padding: 12px; }
     .sidebar-inner .new-chat { display: block; text-align: center; margin-bottom: 12px; }
     .chat-links { list-style: none; margin: 0; padding: 0; }
