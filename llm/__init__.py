@@ -1,6 +1,6 @@
 """Backend-only clients for the LLM proxy. Browser code never calls the proxy."""
 
-from . import openai
+from . import anthropic, openai
 from .base import LLMError, LLMReply
 
 __all__ = ["LLMError", "LLMReply", "complete"]
@@ -8,6 +8,7 @@ __all__ = ["LLMError", "LLMReply", "complete"]
 # provider -> complete(api_model_id, messages, system=None)
 PROVIDERS = {
     "openai": openai.complete,
+    "anthropic": anthropic.complete,
 }
 
 
