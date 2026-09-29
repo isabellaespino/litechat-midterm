@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Models{% endblock %}
+{% block content %}
+  <h1>Models</h1>
+  <p class="muted">Prices are per 1 million tokens. You pay only for the tokens each reply uses.</p>
+  {% regroup models by get_provider_display as providers %}
+  {% for provider in providers %}
+    <h2>{{ provider.grouper }}</h2>
+    {% for model in provider.list %}
+      <div class="card">
+        <strong>{{ model.display_name }}</strong>
+        <span class="badge">{{ model.get_tier_display }}</span>
+        {% if model.description %}<p class="muted">{{ model.description }}</p>{% endif %}
+        <div>{{ model.input_price_micros_per_mtok|dollars_precise }} input / {{ model.output_price_micros_per_mtok|dollars_precise }} output per 1M tokens</div>
+      </div>
+    {% endfor %}
+  {% empty %}
+    <p>No models are available yet.</p>
+  {% endfor %}
+{% endblock %}

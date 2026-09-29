@@ -41,6 +41,7 @@
   <nav>
     <a class="brand" href="{% url 'home' %}">Litechat</a>
     <a href="{% url 'home' %}">Home</a>
+    <a href="{% url 'model_list' %}">Models</a>
     <span class="spacer"></span>
     {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
     {% if user.is_authenticated %}
