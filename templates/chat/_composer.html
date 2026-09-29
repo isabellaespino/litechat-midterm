@@ -8,6 +8,14 @@
     {% else %}
       {{ form.llm_model }}
     {% endif %}
+    {% if user_memory_count %}
+      {# A normal form control (works without JS). The marker says the switch was shown. #}
+      <input type="hidden" name="memories_switch" value="1">
+      <label class="memory-switch" for="id_include_memories" title="Send your memories from My Profile with this chat's messages">
+        <input type="checkbox" name="include_memories" value="1" id="id_include_memories" role="switch"{% if memories_switch_checked %} checked{% endif %}>
+        <span>Include memories <span class="muted">({{ user_memory_count }})</span></span>
+      </label>
+    {% endif %}
     <textarea name="content" rows="2" maxlength="{{ max_chars }}" aria-label="Message" placeholder="Message…" required{% if out_of_credit %} disabled{% endif %}>{{ form.content.value|default_if_none:"" }}</textarea>
     <button type="submit" class="btn"{% if out_of_credit %} disabled{% endif %}>Send</button>
   </div>

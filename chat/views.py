@@ -71,8 +71,18 @@ def model_available(model):
     return model.is_active and model.provider in settings.CHAT_PROVIDERS
 
 
+def switch_checked(form, conversation):
+    """What the "Include memories" switch shows: the posted value after a failed send,
+    otherwise the chat's saved value (on for a new chat)."""
+    if form is not None and form.is_bound and form.data.get("memories_switch"):
+        return bool(form.data.get("include_memories"))
+    return conversation.include_memories if conversation is not None else True
+
+
 def chat_context(request, conversation=None, **extra):
     context = {
+        "user_memory_count": request.user.memories.count(),
+        "memories_switch_checked": switch_checked(extra.get("form"), conversation),
         "conversation": conversation,
         "messages_list": conversation.messages.all() if conversation else [],
         "sidebar_conversations": sidebar_conversations(request.user),
@@ -140,7 +150,10 @@ def chat_new(request):
         return out_of_credit(request, context)
     try:
         conversation = send_message(
-            request.user, form.cleaned_data["llm_model"], form.cleaned_data["content"]
+            request.user,
+            form.cleaned_data["llm_model"],
+            form.cleaned_data["content"],
+            include_memories=form.include_memories_for(None),
         )
     except LLMError as error:
         return respond_error(request, context, error.status, error.message)
@@ -185,7 +198,11 @@ def chat_detail(request, pk):
         return out_of_credit(request, context)
     try:
         conversation = send_message(
-            request.user, conversation.llm_model, form.cleaned_data["content"], conversation
+            request.user,
+            conversation.llm_model,
+            form.cleaned_data["content"],
+            conversation,
+            include_memories=form.include_memories_for(conversation),
         )
     except LLMError as error:
         return respond_error(request, context, error.status, error.message)

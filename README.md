@@ -9,13 +9,14 @@ prepaid US dollar balance that admins top up in Django admin.
 Users pick a model from OpenAI, Anthropic or Google, and each reply is charged by
 the tokens it uses. Built with Django, SQLite and server-rendered templates.
 
-> **Status: loop 7.** Chat works end to end with all three models: GPT-5.6 Luna
+> **Status: loop 8.** Chat works end to end with all three models: GPT-5.6 Luna
 > (OpenAI), Claude Haiku (Anthropic) and Gemini Flash (Google). It uses a chatbot-style
 > layout, and each reply is charged from its token usage at that model's price. Usage
 > and costs are shown on **My Profile**, which also holds an optional **Global System
 > Prompt**. Replies render Markdown safely, chats can be deleted, and the sidebar shows
 > each chat's date. The app has a navy-and-gold design and a landing page with a price
-> snapshot. New chats are named automatically, and My Profile holds Memories.
+> snapshot. New chats are named automatically, and My Profile holds Memories, which
+> each chat can switch on or off.
 
 ## Requirements
 
@@ -118,6 +119,11 @@ shows "unavailable" (503) and charges nothing, and the other models keep working
     every model in every chat, so they also count toward input tokens. My Profile shows
     an estimate of what your prompt and memories add to each message. Delete a memory
     any time; it's removed at once.
+  - Once you have a memory, an **Include memories** switch appears next to the message
+    box. It's on for new chats and saved per chat. Change it any time; it applies from
+    the next message you send. When it's off, your memories aren't sent but your Global
+    System Prompt still is. It's a normal form control, so it works without JavaScript.
+    Automatic titles never include memories or the prompt.
 
   Each reply is charged its actual cost. When your balance reaches $0.00 or less,
   sending is blocked until an admin tops you up. The last reply can take the balance

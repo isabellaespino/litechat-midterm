@@ -58,7 +58,8 @@
   </div>
   {% if system_tokens %}
     <p class="muted small system-estimate">Your system prompt and memories add about {{ system_tokens }} tokens to every message
-      ({% for name, micros in system_cost_estimates %}≈ {{ micros|dollars_precise }} with {{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}). Estimate.</p>
+      in chats with memories switched on ({% for name, micros in system_cost_estimates %}≈ {{ micros|dollars_precise }} with {{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}).
+      Chats with the switch off send only your system prompt. Estimate.</p>
   {% endif %}
 
   <h2>Usage by chat</h2>

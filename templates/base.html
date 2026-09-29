@@ -132,6 +132,14 @@
     .composer .alert:empty { display: none; }
     .composer .alert { color: var(--error); margin-bottom: 6px; }
     .model-chip { flex: none; align-self: center; font-size: .85rem; padding: 4px 10px; border-radius: 999px; background: var(--navy-100); color: var(--text); white-space: nowrap; }
+    /* "Include memories" switch (loop 8): a native checkbox drawn as a switch. Off: white
+       track, muted border and knob; on: navy track, white knob (both >= 3:1 as controls). */
+    .memory-switch { display: inline-flex; align-items: center; gap: 6px; flex: none; align-self: center; margin: 0; font-size: .85rem; font-weight: 600; color: var(--text); white-space: nowrap; cursor: pointer; }
+    .memory-switch input { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0; border: 2px solid var(--muted); border-radius: 999px; background: var(--card); cursor: pointer; transition: background .15s, border-color .15s; }
+    .memory-switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+    .memory-switch input:checked { background: var(--navy-700); border-color: var(--navy-700); }
+    .memory-switch input:checked::after { background: var(--on-navy); transform: translateX(16px); }
+    @media (prefers-reduced-motion: reduce) { .memory-switch input, .memory-switch input::after { transition: none; } }
     .composer .hint { display: none; margin: 4px 0 0; font-size: .75rem; color: var(--muted); }
     .js .composer .hint { display: block; }
     .notice { background: var(--error-soft); color: var(--error); padding: 8px 12px; border-radius: 6px; margin: 0 auto 8px; max-width: 820px; }
@@ -144,6 +152,9 @@
       .chat-delete { opacity: 1; }
       .bubble { max-width: 90%; }
       .composer-row { flex-wrap: wrap; }
+      /* Phones: the model chip (and the memories switch) take the first line; the message
+         box and Send always share their own line, so neither is squeezed. */
+      .composer-row textarea { flex: 1 1 calc(100% - 96px); min-width: 0; }
       .composer-row select { max-width: 100%; width: 100%; }
     }
 

@@ -20,6 +20,18 @@ class MessageForm(forms.Form):
         max_length=settings.CHAT_MESSAGE_MAX_CHARS,
         widget=forms.Textarea(attrs={"rows": 4, "placeholder": "Type your message…"}),
     )
+    # Loop 8: the "Include memories" switch. An unchecked checkbox isn't submitted, so
+    # the hidden `memories_switch` marker (rendered only when the switch is shown)
+    # tells "switched off" apart from "no switch on the page".
+    include_memories = forms.BooleanField(required=False)
+    memories_switch = forms.BooleanField(required=False, widget=forms.HiddenInput)
+
+    def include_memories_for(self, conversation):
+        """The switch value for this send, or the chat's saved value (on for a new
+        chat) when the switch wasn't on the page."""
+        if self.cleaned_data.get("memories_switch"):
+            return bool(self.cleaned_data.get("include_memories"))
+        return conversation.include_memories if conversation is not None else True
 
 
 class NewChatForm(MessageForm):
