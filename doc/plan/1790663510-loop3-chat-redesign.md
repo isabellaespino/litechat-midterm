@@ -35,15 +35,19 @@ normal browser form post sends `Accept: …, */*`, which `accepts()` treats as J
 
 | Situation | Form post | JSON (`fetch`) |
 |---|---|---|
-| Send success, existing chat | 302 → `/chats/<id>/#latest` | **200** `{"messages_html", "sidebar_html"}` |
-| Send success, new chat | 302 → `/chats/<id>/#latest` | **200** `{"chat_url", "main_html", "sidebar_html"}` |
+| Send success, existing chat | 302 → `/chats/<id>/#latest` | **200** `{"messages_html", "sidebar_html", "balance"}` |
+| Send success, new chat | 302 → `/chats/<id>/#latest` | **200** `{"chat_url", "main_html", "sidebar_html", "balance"}` |
 | Invalid message form | 400 page | 400 `{"error", "field_errors"}` |
 | Inactive or unsupported model | 400 page | 400 `{"error"}` |
-| Balance ≤ $0 | **402** page | **402** `{"error", "out_of_credit": true}` |
+| Balance ≤ $0 | **402** page | **402** `{"error", "out_of_credit": true, "balance"}` |
 | Proxy failure | 502 / 503 page | 502 / 503 `{"error"}` |
 | Another user's chat, or an unknown chat | 404 | 404 `{"error"}` |
 | Logged out | 302 to log-in | **401** `{"error", "login_url"}` |
 
+- `balance` is the user's available credit **after** the reply was charged, formatted
+  exactly like the nav (`format_dollars`, rounded down, e.g. `"$1.99"`, `"-$0.01"`). It's
+  read from the wallet after the charge's atomic block, and the script writes it into the
+  nav so the balance updates after every reply (decision #1).
 - The HTML fragments are rendered by the **same partial templates** the full pages use.
 - The script never builds HTML from model output. The user's own text in the pending
   bubble is inserted with `textContent`.
@@ -85,7 +89,9 @@ normal browser form post sends `Accept: …, */*`, which `accepts()` treats as J
       permanent=True)`, which returns **301**. Delete `templates/billing/credit.html` and
       the old `credit` view.
 - [ ] Nav (`base.html`): replace "Available credit: $X.XX" with **"My Profile ·
-      {{ available_credit_micros|dollars }}"**, linking to `/profile/`.
+      <span data-nav-balance>{{ available_credit_micros|dollars }}</span>"**, linking
+      to `/profile/`. The `data-nav-balance` span is the hook the script updates in
+      Step 5.
 - [ ] Update `chat/_out_of_credit.html`: the link "View your credit" now points to
       `profile`.
 - [ ] Tests (`billing/tests.py`; replace the old `CreditPageTests`):
@@ -102,8 +108,9 @@ normal browser form post sends `Accept: …, */*`, which `accepts()` treats as J
   - [ ] The profile query count is bounded (`assertNumQueries`) whatever the number of
         chats on the page.
   - [ ] `GET /credit/` → **301** to `/profile/`.
-  - [ ] The nav shows "My Profile · $2.00" and links to `/profile/`. A balance of 1 µ$
-        shows "$0.00", and -1 µ$ shows "-$0.01".
+  - [ ] The nav shows "My Profile · $2.00" and links to `/profile/`. The amount is
+        inside a `data-nav-balance` element. A balance of 1 µ$ shows "$0.00", and -1 µ$
+        shows "-$0.01".
 - [ ] Commit.
 
 ## Step 2: `feat: redesign chat pages as a sidebar and bubble thread`
@@ -214,16 +221,24 @@ Everything in this step works **without JavaScript**.
       404 in JSON mode.
 - [ ] Success in JSON mode:
   - existing chat → **200** `{"messages_html": <the two new messages rendered with
-    _message.html>, "sidebar_html": <_sidebar.html>}`
+    _message.html>, "sidebar_html": <_sidebar.html>, "balance": <the post-charge
+    balance>}`
   - new chat → **200** `{"chat_url", "main_html": <_main.html for the new chat>,
-    "sidebar_html"}`
+    "sidebar_html", "balance"}`
+  - `balance` comes from a fresh `get_wallet(user).balance_micros` read **after**
+    `send_message()` returns (after its atomic charge), formatted with
+    `format_dollars`.
 - [ ] 400 JSON includes `field_errors` (`form.errors.get_json_data()`). 402 JSON
-      includes `out_of_credit: true`.
+      includes `out_of_credit: true` and `balance`.
 - [ ] Tests (a JSON-mode twin for each status, using `HTTP_ACCEPT="application/json"`
       and the mocked `llm.openai.requests.post`):
   - [ ] Existing chat success → 200 JSON containing the reply text in `bubble
         assistant`, and the sidebar HTML. Exactly one charge, of the same cost as the
         form path. The proxy received the full history.
+  - [ ] `balance` equals `format_dollars(wallet.balance_micros)` **after** the charge.
+        For example, when a user at exactly $2.00 is charged 1,100 µ$, it's `"$1.99"`,
+        and the reply goes past the previous `"$2.00"`. A reply that takes a 1 µ$
+        balance negative returns `"-$0.01"`. 402 includes the current `balance`.
   - [ ] New chat success → 200 with `chat_url` for the created conversation, and
         `main_html` containing both bubbles and a model label (no `<select>`).
   - [ ] 400 (empty, too long, unsupported model), 402 (balance 0 and -1; proxy **not**
@@ -258,16 +273,17 @@ Everything in this step works **without JavaScript**.
       `history.pushState({}, "", chat_url)`.
     - Otherwise, insert `messages_html` at the end of `.thread-inner`.
     - Replace every `[data-sidebar-list]` with `sidebar_html`.
+    - **Update the nav balance:** set the `textContent` of every `[data-nav-balance]`
+      to `balance` (decision #1: the balance stays visible and current after each
+      reply).
     - Re-enable the composer, focus the textarea and scroll to the bottom.
   - [ ] **On an error status:** remove the pending bubbles, **restore the draft** into
         the textarea, and put the `error` into the `role="alert"` region.
-    - **402:** keep the composer disabled and show the out-of-credit notice, linking to
-      `/profile/`.
+    - **402:** keep the composer disabled, show the out-of-credit notice linking to
+      `/profile/`, and update `[data-nav-balance]` from `balance`.
     - **401:** show "Please log in again", linking to `login_url`.
     - **A non-JSON or network failure:** show "Something went wrong. Please try again."
     - Otherwise, re-enable the composer.
-  - [ ] **The nav balance:** the script doesn't update "My Profile · $X.XX" after a
-        send. The next full page load does. (The plan accepts this; see "Open risks".)
   - [ ] `popstate` → `location.reload()` (keeps back/forward correct after
         `pushState`).
   - [ ] Honor `prefers-reduced-motion`: the dots don't animate.
@@ -275,6 +291,8 @@ Everything in this step works **without JavaScript**.
 - [ ] Tests (server side only):
   - [ ] The chat pages include the script exactly once, and the composer form has class
         `composer` and the right `action` (`chat_new` or `chat_detail`).
+  - [ ] The script references `data-nav-balance` and `balance`, and every page's nav
+        has exactly one `[data-nav-balance]` element for logged-in users.
   - [ ] The script contains no proxy URL or key name. `grep -r
         "proxy.litechat.ai\|OPENAI_API_KEY" templates/` is empty.
 - [ ] Commit.
@@ -306,17 +324,20 @@ Everything in this step works **without JavaScript**.
       `HTTP_ACCEPT="application/json"`:
   - New chat → 200 with `main_html`.
   - A follow-up → 200 with `messages_html`.
+  - Each response's `balance` matches the wallet after that reply's charge.
   - `/profile/` shows both replies' costs and the totals, and the nav shows "My Profile
     · $1.99".
 - [ ] **Browser pass (the JS behavior the test client can't check).** Drive Chrome with
       the browser tooling if it's available, otherwise hand this checklist to the user.
       It uses a dedicated `uitest` account signed up on the **dev DB**. That adds rows
-      but resets nothing. **Ask the user before creating it.**
+      but resets nothing. **The user has authorized creating it.**
   - [ ] Enter sends. Shift+Enter adds a new line.
   - [ ] The user bubble appears at once, with the thinking bubble. The reply replaces it
         with no reload.
   - [ ] The first message in New chat updates the URL to `/chats/<id>/`, and the chat
         appears at the top of the sidebar.
+  - [ ] **After each reply, the nav's "My Profile · $X.XX" updates without a reload.**
+        It matches `/profile/` when opened next.
   - [ ] Rename works, and the sidebar and header update.
   - [ ] My Profile shows the chat and reply costs. The chat pages show none.
   - [ ] With JavaScript disabled, sending still works via a page reload.
@@ -327,9 +348,6 @@ Everything in this step works **without JavaScript**.
 
 ## Open risks (accepted for this loop)
 
-- **The nav balance goes stale after a fetch send** until the next page load. The
-  alternative is returning `balance_html` in the JSON and updating the nav. It's cheap,
-  and can be added if the stale value bothers you in the browser pass.
 - **Two tabs can still both send** at a balance just above $0. The overdraft is bounded
   (first study, §6.3). The script only prevents double sends within one tab.
 - **The JS behavior has no automated tests** (study §9). It's covered by the browser
@@ -347,6 +365,8 @@ Everything in this step works **without JavaScript**.
 - There's no cost or token count on any chat page. My Profile (nav: "My Profile ·
   $X.XX") shows the credit, the totals, and every chat's and reply's cost.
   `/credit/` → 301.
+- The nav balance updates after every reply without a reload, from the JSON `balance`
+  (decision #1).
 - Metering is unchanged: the 402 block, charging the actual cost, charging nothing on
   failure. Every status code holds in both form and JSON modes, and JSON requests from
   logged-out users get 401.
