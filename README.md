@@ -9,13 +9,13 @@ prepaid US dollar balance that admins top up in Django admin.
 Users pick a model from OpenAI, Anthropic or Google, and each reply is charged by
 the tokens it uses. Built with Django, SQLite and server-rendered templates.
 
-> **Status: loop 6.** Chat works end to end with all three models: GPT-5.6 Luna
+> **Status: loop 7.** Chat works end to end with all three models: GPT-5.6 Luna
 > (OpenAI), Claude Haiku (Anthropic) and Gemini Flash (Google). It uses a chatbot-style
 > layout, and each reply is charged from its token usage at that model's price. Usage
 > and costs are shown on **My Profile**, which also holds an optional **Global System
 > Prompt**. Replies render Markdown safely, chats can be deleted, and the sidebar shows
 > each chat's date. The app has a navy-and-gold design and a landing page with a price
-> snapshot.
+> snapshot. New chats are named automatically, and My Profile holds Memories.
 
 ## Requirements
 
@@ -84,6 +84,10 @@ shows "unavailable" (503) and charges nothing, and the other models keep working
     right away with a "thinking" indicator, and the whole reply replaces it without
     reloading the page. Replies can take a few seconds (the proxy is allowed up to 120
     seconds).
+  - A new chat starts with the first line of your message as its title. A moment
+    after the first reply, it gets a short **automatic title** from the same model.
+    That's free: it costs you nothing and never appears in your usage. Renaming always
+    wins, and without JavaScript the first line stays as the title.
   - **Rename** a chat from the link next to its title.
   - **Delete** a chat with the **×** on its sidebar row (or **Delete** next to its
     title), then confirm. The chat and its messages are gone for good. What its replies
@@ -109,6 +113,11 @@ shows "unavailable" (503) and charges nothing, and the other models keep working
     that's sent as the system prompt in every chat, with every model. For example,
     "Always reply in French." Leave it empty for none. It's resent with every message,
     so it counts toward each reply's input tokens.
+  - your **Memories**: up to 10 short notes about you (200 characters each), e.g. "I'm
+    a student" or "keep answers short". They're sent with the Global System Prompt to
+    every model in every chat, so they also count toward input tokens. My Profile shows
+    an estimate of what your prompt and memories add to each message. Delete a memory
+    any time; it's removed at once.
 
   Each reply is charged its actual cost. When your balance reaches $0.00 or less,
   sending is blocked until an admin tops you up. The last reply can take the balance
@@ -118,7 +127,11 @@ shows "unavailable" (503) and charges nothing, and the other models keep working
     ledger is append-only: use an *adjustment* (which may be negative) to correct a
     mistake.
   - *LLM models* edits the catalog. Prices are entered in dollars per 1M tokens.
-  - *Wallets* and each user's page show current balances (read-only).
+  - *Wallets* and each user's page show current balances (read-only). Each user's page
+    also shows their Global System Prompt and Memories (read-only).
+  - *Title generations (app cost)* lists every automatic title call with its tokens,
+    status and cost, and a total for the rows shown. The app pays for these, so they
+    never appear in a user's ledger.
 
 ## Running the tests
 
