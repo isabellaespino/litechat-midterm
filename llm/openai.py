@@ -9,7 +9,7 @@ PROVIDER = "OpenAI"
 STOP_REASONS = {"stop": "stop", "length": "length"}
 
 
-def complete(api_model_id, messages, system=None):
+def complete(api_model_id, messages, system=None, max_output_tokens=None, timeout=None):
     api_key = require_key(settings.OPENAI_API_KEY, "OPENAI_API_KEY")
     if system:
         messages = [{"role": "system", "content": system}, *messages]
@@ -22,9 +22,10 @@ def complete(api_model_id, messages, system=None):
         {
             "model": api_model_id,
             "messages": messages,
-            "max_tokens": settings.MAX_OUTPUT_TOKENS,
+            "max_tokens": max_output_tokens or settings.MAX_OUTPUT_TOKENS,
             "reasoning_effort": "none",
         },
+        timeout=timeout,
     )
     try:
         choice = data["choices"][0]

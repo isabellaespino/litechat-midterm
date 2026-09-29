@@ -12,14 +12,14 @@ ROLES = {"user": "user", "assistant": "model"}
 STOP_REASONS = {"STOP": "stop", "MAX_TOKENS": "length", "SAFETY": "safety"}
 
 
-def complete(api_model_id, messages, system=None):
+def complete(api_model_id, messages, system=None, max_output_tokens=None, timeout=None):
     api_key = require_key(settings.GOOGLE_API_KEY, "GOOGLE_API_KEY")
     body = {
         "contents": [
             {"role": ROLES[m["role"]], "parts": [{"text": m["content"]}]} for m in messages
         ],
         "generationConfig": {
-            "maxOutputTokens": settings.MAX_OUTPUT_TOKENS,
+            "maxOutputTokens": max_output_tokens or settings.MAX_OUTPUT_TOKENS,
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
@@ -33,6 +33,7 @@ def complete(api_model_id, messages, system=None):
         f"{quote(api_model_id, safe='')}:generateContent",
         {"x-goog-api-key": api_key, "Content-Type": "application/json"},
         body,
+        timeout=timeout,
     )
     try:
         candidate = data["candidates"][0]

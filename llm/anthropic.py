@@ -27,12 +27,12 @@ def merge_same_role(messages):
     return merged
 
 
-def complete(api_model_id, messages, system=None):
+def complete(api_model_id, messages, system=None, max_output_tokens=None, timeout=None):
     api_key = require_key(settings.ANTHROPIC_API_KEY, "ANTHROPIC_API_KEY")
     body = {
         "model": api_model_id,
         "messages": merge_same_role(messages),
-        "max_tokens": settings.MAX_OUTPUT_TOKENS,
+        "max_tokens": max_output_tokens or settings.MAX_OUTPUT_TOKENS,
         "thinking": {"type": "disabled"},
     }
     if system:
@@ -48,6 +48,7 @@ def complete(api_model_id, messages, system=None):
             "Content-Type": "application/json",
         },
         body,
+        timeout=timeout,
     )
     try:
         blocks = data["content"]
