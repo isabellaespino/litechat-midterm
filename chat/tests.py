@@ -138,7 +138,8 @@ class ChatAdminTests(TestCase):
 def main_region(response):
     """The page below the top nav (sidebar + chat), where no costs may appear."""
     content = response.content.decode()
-    return content[content.index("<main"):]
+    visible = content[content.index("<main"):]
+    return re.sub(r"<script\b.*?</script>", "", visible, flags=re.S)  # code, not page text
 
 
 def proxy_ok(content="Hello! How can I help?", prompt_tokens=1000, completion_tokens=300, finish_reason="stop"):
@@ -647,3 +648,45 @@ class ChatJsonTests(TestCase):
         for html in (data["messages_html"], data["sidebar_html"]):
             for text in ("tokens", "per 1M", "$"):
                 self.assertNotIn(text, html)
+
+
+class ChatScriptTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        self.client.force_login(self.user)
+
+    def test_script_included_once_with_right_form_actions(self):
+        for url, action in (
+            (reverse("chat_new"), reverse("chat_new")),
+            (reverse("chat_detail", args=[self.conversation.pk]), reverse("chat_detail", args=[self.conversation.pk])),
+        ):
+            with self.subTest(url=url):
+                content = self.client.get(url).content.decode()
+                self.assertEqual(content.count("<script data-chat-script>"), 1)
+                self.assertIn(f'class="composer" action="{action}"', content)
+                self.assertIn(f'data-profile-url="{reverse("profile")}"', content)
+
+    def test_script_updates_nav_balance(self):
+        content = self.client.get(reverse("chat_new")).content.decode()
+        script = content.split("<script data-chat-script>")[1].split("</script>")[0]
+        self.assertIn("[data-nav-balance]", script)
+        self.assertIn("data.balance", script)
+        self.assertIn('"Accept": "application/json"', script)
+        self.assertEqual(content.count("<span data-nav-balance>"), 1)  # the nav's one hook
+
+    def test_templates_never_mention_proxy_or_keys(self):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        for path in Path(settings.BASE_DIR, "templates").rglob("*.html"):
+            text = path.read_text()
+            for secret in ("proxy.litechat.ai", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+                self.assertNotIn(secret, text, f"{secret} found in {path}")
+
+    def test_other_pages_have_no_chat_script(self):
+        for url in (reverse("home"), reverse("profile"), reverse("model_list")):
+            with self.subTest(url=url):
+                self.assertNotContains(self.client.get(url), "data-chat-script")
