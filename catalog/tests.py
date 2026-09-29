@@ -88,3 +88,44 @@ class LLMModelAdminFormTests(TestCase):
         changelist = self.client.get(reverse("admin:catalog_llmmodel_changelist"))
         self.assertEqual(changelist.status_code, 200)
         self.assertContains(changelist, "$0.30")
+
+
+class SeedCommandTests(TestCase):
+    def seed(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("seed", stdout=out)
+        return out.getvalue()
+
+    def test_creates_the_three_proxy_models(self):
+        output = self.seed()
+        self.assertEqual(output.count("created:"), 3)
+        prices = {
+            m.api_model_id: (m.provider, m.tier, m.input_price_micros_per_mtok, m.output_price_micros_per_mtok)
+            for m in LLMModel.objects.all()
+        }
+        self.assertEqual(
+            prices,
+            {
+                "claude-haiku-4-5-20251001": ("anthropic", "value", 1_000_000, 5_000_000),
+                "gpt-5.6-luna": ("openai", "value", 500_000, 2_000_000),
+                "gemini-3.8-flash": ("google", "value", 300_000, 2_500_000),
+            },
+        )
+
+    def test_rerun_creates_nothing_and_keeps_admin_edits(self):
+        self.seed()
+        LLMModel.objects.filter(api_model_id="gpt-5.6-luna").update(
+            input_price_micros_per_mtok=750_000
+        )
+        output = self.seed()
+        self.assertEqual(output.count("created:"), 0)
+        self.assertEqual(output.count("exists:"), 3)
+        self.assertEqual(LLMModel.objects.count(), 3)
+        self.assertEqual(
+            LLMModel.objects.get(api_model_id="gpt-5.6-luna").input_price_micros_per_mtok,
+            750_000,
+        )
