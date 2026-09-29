@@ -8,6 +8,10 @@ preferences live in **`accounts.UserSettings`**, a one-to-one to the user (relat
 holds one preference, the **Global System Prompt**; see
 [billing → Global System Prompt](billing.md#global-system-prompt).
 
+- **Log-in and sign-up pages** are centered cards ("Welcome back" / "Welcome to
+  Chat4All"), with labeled fields, one full-width button, a link to the other page, and
+  no social login. See [Visual design → cards](design.md#log-in-and-sign-up-cards).
+  Validation is server-side (`novalidate`), so errors show inside the card with 400.
 - **Sign-up** (`SignUpView`, `/accounts/signup/`): a `UserCreationForm` with username,
   password and confirmation, plus Django's password validators. When valid, it creates
   the user, logs them in and redirects home. The page shows the sign-up credit amount,
@@ -24,7 +28,7 @@ Every page is reachable from the nav bar or from a link on another page:
 
 | Who | Nav links |
 |---|---|
-| Everyone | Litechat (brand, links home), Home, Models |
+| Everyone | Chat4All (brand, links home), Home, Models |
 | Logged in | **Chats** (→ `/chats/`, which opens the latest chat), **My Profile · $X.XX** (→ `/profile/`; the balance updates after each reply), "Hi, username", Log out |
 | Logged out | Log in, Sign up |
 | Staff | Admin |

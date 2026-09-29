@@ -193,7 +193,7 @@ the script, every form still works with a normal POST and page reload.
 - **On 200:**
   - Removes the pending bubbles.
   - New chat: replaces `.chat-main` with `main_html`, calls `history.pushState` to
-    `chat_url`, and updates `document.title`.
+    `chat_url`, and updates `document.title` (to "<chat title> · Chat4All").
   - Existing chat: appends `messages_html`.
   - Replaces every `[data-sidebar-list]`, then re-localizes the dates. Dates are also
     re-localized right after a `main_html` swap, because it holds the mobile sidebar

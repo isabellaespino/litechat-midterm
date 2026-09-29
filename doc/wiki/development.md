@@ -31,12 +31,12 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 
 ## Tests
 
-`python manage.py test` runs 159 tests (at loop 5):
+`python manage.py test` runs 175 tests (at loop 6):
 
 | File | Tests | Covers |
 |---|---|---|
-| `config/tests.py` | 5 | the home page; the money helpers (rounding, negatives, conversion) |
-| `accounts/tests.py` | 16 | sign-up, log-in and log-out status codes and behavior, including the 400s; the Global System Prompt form (save, strip, clear, 400 over 4,000 characters, 405, anonymous, admin inline) |
+| `config/tests.py` | 18 | the money helpers (rounding, negatives, conversion); `BrandTests` (no rendered page says "Litechat", the Chat4All titles, nav and admin header, the script's title); `ContrastTests` (the WCAG ratio of 22 palette pairs ≥ 4.5, parsed from `base.html`, and gold text only on navy); `EstimateTests`; `LandingPageTests` (hero, CTA for logged-out and logged-in users, steps, snapshot values, the snapshot following catalog edits, the theme only on `/`) |
+| `accounts/tests.py` | 19 | sign-up, log-in and log-out status codes and behavior, including the 400s; `AuthCardTests` (headings, a label per input, one full-width button, cross-links, no social login, errors in the card); the Global System Prompt form (save, strip, clear, 400 over 4,000 characters, 405, anonymous, admin inline) |
 | `catalog/tests.py` | 7 | `/models/` grouping and inactive hiding; dollar↔µ$ in the admin form; the seed command's idempotence |
 | `billing/tests.py` | 22 | sign-up credit for every creation path; the ledger invariant; `str()` in dollars; admin top-ups, adjustments and dollar display; append-only 403s; read-only wallets; **My Profile** (usage by chat and reply, totals, pagination, bounded queries, the `/credit/` 301, the nav "My Profile · $X.XX") |
 | `llm/tests.py` | 31 | `ProxyErrorMappingTests` runs the **same** checks for every row of `PROVIDER_CASES` (OpenAI, Anthropic, Google): 502/503 mapping, timeouts and connection errors, malformed bodies, a 120 s timeout, and a missing key → 503 with no request. It also covers per-adapter request shape, the system prompt present or absent, parsing, usage and stop mapping, and estimates; Anthropic block joining, cache tokens and same-role merging; Google roles, `systemInstruction`, thinking tokens and safety blocks; dispatch; and the no-network guard. |
@@ -108,6 +108,17 @@ browser at the verify step.
 
   The screenshots caught one more thing no assertion did: the "Deleted chats" total
   wasn't right-aligned.
+
+- **Loop 6's check (39/39)** had **no proxy calls**:
+  - an **in-page contrast audit**: every visible element with its own text (about 600
+    across 8 pages, at 1280px and 375px) against its nearest opaque ancestor background,
+    none under AA
+  - no horizontal scroll at 375px
+  - the gold focus ring with its navy halo on keyboard focus
+  - where the landing CTA leads when logged out and logged in
+  - screenshots of every page, reviewed
+
+  See [Visual design → checking visuals](design.md#checking-visuals).
 
 ### Date formatting under Node
 

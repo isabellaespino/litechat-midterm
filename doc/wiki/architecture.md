@@ -13,14 +13,16 @@ are in the study, §3, and the reasons for each dependency in §7.
 ## Layout
 
 ```
-config/        project package: settings, root URLs, home view, money helpers
+config/        project package: settings, root URLs (and the Chat4All admin header),
+               the landing view, money helpers
   money.py       micro-dollar conversion and formatting (shared by all apps)
   test_runner.py NoNetworkTestRunner: fails any real HTTP request during tests
-  views.py       home page
-  tests.py       home page and money helper tests
+  views.py       the landing page (home), with the price snapshot
+  tests.py       landing, estimates, brand (no "Litechat"), contrast, and money tests
 accounts/      sign-up form and view; log-in view that returns 400 on bad credentials;
                UserSettings (the Global System Prompt), its save view and admin inline
 catalog/       LLMModel, its admin, the /models/ page, the `seed` command,
+               estimates.py (messages-per-budget estimates for the landing page),
                and the `money` template filters (templatetags/money.py)
 billing/       Wallet, CreditTransaction, services.py (the only balance writer, plus
                reply_cost_micros), the sign-up credit signal, the nav context
@@ -36,8 +38,10 @@ llm/           plain Python package (not a Django app): the backend-only proxy c
   openai.py      OpenAI Chat Completions adapter
   anthropic.py   Anthropic Messages adapter
   google.py      Google Gemini generateContent adapter
-templates/     base.html (nav + all CSS, incl. the chat app layout), home.html,
-               registration/, catalog/, billing/profile.html,
+templates/     base.html (nav + all CSS: the palette tokens, the chat app layout, the
+               landing-only rules under body.landing), home.html (the landing page),
+               registration/ (login, signup, and the shared _field.html),
+               catalog/, billing/profile.html,
                chat/ (layout.html, confirm_delete.html + partials _sidebar, _main,
                _message, _composer,
                _out_of_credit, _script)
@@ -83,7 +87,7 @@ variable with no values.
 
 | Path | Name | View | Access |
 |---|---|---|---|
-| `/` | `home` | `config.views.home` | anyone |
+| `/` | `home` | `config.views.home` (the landing page) | anyone |
 | `/models/` | `model_list` | `catalog.views.model_list` | anyone |
 | `/accounts/signup/` | `signup` | `accounts.views.SignUpView` | logged out (logged-in users are redirected home) |
 | `/accounts/login/` | `login` | `accounts.views.LoginView` | logged out (logged-in users are redirected home) |

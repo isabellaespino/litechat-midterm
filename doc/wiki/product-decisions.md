@@ -10,6 +10,37 @@ People who want occasional access to LLMs from several providers but **won't pay
 subscription**. Every decision below serves that user: pay only for what you use, see
 exactly what you spent, and never be billed for more than you put in.
 
+## What I identified as core
+
+The brief describes Litechat as **metered, à la carte access to LLMs from several
+providers, for regular users who won't pay for a subscription**. So I identified the core
+as **letting a regular person use AI models from several providers and pay only for what
+they use, with no subscription.**
+
+The features that serve that core:
+
+| Core feature | Where it lives |
+|---|---|
+| **Accounts:** sign-up, log-in, log-out | `accounts/`, Django's built-in auth ([accounts](accounts.md)) |
+| **Prepaid credit charged per reply at each model's price, with $2.00 free to start** | the wallet and append-only ledger, `reply_cost_micros`, the sign-up credit, the 402 block ([billing](billing.md)) |
+| **A model picker across OpenAI, Anthropic and Google** | the model catalog and the three provider adapters behind one shared request function ([catalog](catalog.md), [chat → the `llm` package](chat.md#the-llm-package-proxy-clients)) |
+| **Saved chats that can be revisited, renamed and deleted** | `Conversation`/`Message`, the sidebar, rename, delete ([chat](chat.md)) |
+| **A profile showing the balance and usage** | My Profile, and the nav's "My Profile · $X.XX" ([billing → My Profile](billing.md#my-profile)) |
+
+Everything else makes that core easier to use, but isn't the core itself:
+- the chatbot layout (sidebar, bubbles, Enter to send, no reload)
+- Markdown rendering
+- the Global System Prompt
+- the landing page with its price snapshot
+
+## Out of scope
+
+| Feature | Why it's out of scope |
+|---|---|
+| **Web search** | The proxy's docs state that **hosted search is unavailable** ("Hosted search and code execution are unavailable", on the OpenAI Responses page). Adding it would need a separate search service and API key, a way to pass results to three different providers, and a price for searches on top of token charges. That's a new paid dependency outside the brief's core. |
+| **File uploads** | The proxy's file APIs keep files **private to the proxy account** (ours, shared by every user), **expire them after one hour**, and cap them at 64 MiB per file and 100 files / 256 MiB per account and provider. Supporting uploads would mean our own per-user storage and clean-up, size limits, and handling for the file tokens each provider bills (large documents can cost far more than a chat message), all to work around a one-hour, shared-quota store. The core, pay-per-use chat across providers, doesn't need it. |
+| **Organization billing accounts** | The brief is about **regular individual users**. Shared balances would need organizations, membership and roles, per-member usage and limits, and rules for who can top up or see what. That's a different product (team billing) with its own ledger design. It was recorded as out of scope in the first study (§9, and decisions log §10 #6), and everything here keeps one wallet per user. |
+
 ## The credit system
 
 ### 1. Prepaid credit, charged per token
@@ -219,6 +250,27 @@ slow reply doesn't block other users.
 - Localizing in the browser needs no time-zone setting and no dependency, and it
   degrades to a correct UTC date without JavaScript.
 
+### 12. A Chat4All identity, with navy and gold, and a hero landing page
+
+**Decision** (loop 6, planned directly from a decided list, with no study):
+- The app is renamed **Chat4All** wherever users see it, and the README credits Litechat
+  as the product it replicates.
+- A **navy color scheme with a gold accent** across the whole app.
+- A **hero-themed landing page**, with an original inline-SVG shield, How it works, and a
+  catalog-driven price snapshot. It's the only page with the hero theme.
+- Log-in and sign-up are **centered cards**.
+
+See [Visual design](design.md).
+
+**Why.**
+- A product needs its own name, and "Litechat" is the product being replicated.
+- The landing page explains the core in one screen: no subscription, $2.00 free, three
+  providers, and pay per reply. The price snapshot answers "how far does my money go?"
+  with estimates computed by the same formula as real charges, and the assumption is
+  stated on the page.
+- Readability was a hard requirement, so contrast is enforced by tests (22 pairs, all
+  ≥ 4.5:1) and audited in the browser, not judged by eye.
+
 ## Rejected alternatives
 
 | Alternative | Why we rejected it |
@@ -244,6 +296,9 @@ slow reply doesn't block other users.
 | Soft-deleting chats | It keeps text the user asked to delete, and adds an "is deleted" filter to every query. |
 | A JavaScript `confirm()` dialog for deleting | It has no no-JS fallback, blocks the page, and can't be styled. |
 | Sidebar dates in UTC only, or a per-user time-zone setting | UTC is wrong near midnight for most users. A setting adds UI nobody asked for, when the browser already knows the time zone. |
+| Provider logos, or real superhero imagery on the landing page | These are trademarks and copyrighted characters. Providers are named in text, and the emblem is an original shield drawn in inline SVG. |
+| Hard-coding the price snapshot, or computing it with a separate formula | It would drift from the catalog and from real charges. The snapshot reads active models from the catalog and uses `reply_cost_micros`, so an admin price edit changes it immediately. |
+| Gold as a text color on light backgrounds | About 1.9:1 on white, which is unreadable. Gold is text only on navy, and a test enforces this. |
 | Showing costs on the chat pages | Chat pages should feel like a chatbot, not a meter. Costs moved to My Profile, and the nav keeps the balance visible (redesign §10 #1). |
 
 ## Departures from the plan
@@ -394,4 +449,27 @@ its five commits, plus one follow-up fix. The code differs from it in these plac
      (04:47 → 20:47).
    - `uitest` deleted one old "Browser pass chat", whose three charges now form its
      "Deleted chats" line.
+
+### Loop 6
+
+The loop 6 plan (`doc/plan/1790683617-loop6-chat4all-visual-refresh.md`) was followed in
+its five commits, with no follow-up fix. The code differs from it in these places:
+
+1. **The focus ring has a navy halo.** The plan specified a gold outline. A gold ring
+   alone is about 1.9:1 on white, which fails WCAG's 3:1 for focus indicators. So
+   `:focus-visible` adds `box-shadow: 0 0 0 5px var(--navy-900)`, which makes the ring
+   visible on both light and navy backgrounds.
+2. **The contrast test covers 22 pairs, not only the plan's table.** It adds the
+   combinations the new CSS introduced: error text on `--error-soft`, muted text on
+   `--navy-100`, navy on `--gold-hover`, white on `--error`, and muted-on-navy on
+   `--navy-700`. The lowest is 5.7:1 (error on error-soft), still above AA.
+3. **Log-in and sign-up forms use `novalidate`**, so validation errors come from the
+   server and appear inside the card (with the existing 400) instead of as browser
+   pop-ups.
+4. **Two unused style rules from loop 2 were removed** (`.msg-user`, `.usage`).
+5. **Verification:** the browser check passed 39/39. It audited contrast on about 600
+   text elements across 8 pages at 1280px and 375px, found no horizontal scroll, and
+   confirmed the focus ring and where the CTA leads. Screenshots of every page were
+   reviewed. There were no proxy calls and no dev-database changes beyond `uitest`
+   logging in.
 

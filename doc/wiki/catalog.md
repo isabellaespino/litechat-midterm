@@ -48,6 +48,20 @@ Chat-enabled models have a **Start a chat** link to `/chats/new/`. With the seed
 catalog that's every model. A model whose provider isn't in `CHAT_PROVIDERS` would show a
 **Coming soon** badge instead, but none does today.
 
+## Estimates for the landing page
+
+`catalog/estimates.py`, `estimate_messages(model, budget_micros, input_tokens=500,
+output_tokens=300)`, returns `(per_message_micros, messages)`:
+- `per_message` uses `billing.services.reply_cost_micros`, the same round-up formula as
+  real charges.
+- `messages` is `None` when the model is free.
+- The assumed token counts are module constants (`ASSUMED_INPUT_TOKENS`,
+  `ASSUMED_OUTPUT_TOKENS`) that the landing page also prints, so the text and the math
+  can't drift apart.
+- The landing page lists every **active** model, so deactivating a model or editing its
+  price in admin changes the snapshot immediately. See [Visual design → landing
+  page](design.md#landing-page-).
+
 ## Seed data: `python manage.py seed`
 
 `catalog/management/commands/seed.py` adds the three models the proxy serves. They all
