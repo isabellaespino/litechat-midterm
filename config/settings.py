@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "accounts",
     "catalog",
     "billing",
+    "chat",
 ]
 
 MIDDLEWARE = [
@@ -152,7 +153,19 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
+# LLM proxy (https://proxy.litechat.ai/docs). Not secret, so not in .env.
+LLM_PROXY_BASE_URL = "https://proxy.litechat.ai"
+# The proxy's response time varies; a slow reply is better than a failed one.
+LLM_TIMEOUT_SECONDS = 120
+# Providers whose models can be picked in chat.
+CHAT_PROVIDERS = ["openai"]
+CHAT_MESSAGE_MAX_CHARS = 8000
+
 
 # Billing. All money is stored as whole micro-dollars (1 USD = 1_000_000).
 SIGNUP_CREDIT_MICROS = 2_000_000
 MAX_OUTPUT_TOKENS = 1024
+
+
+# Tests must never reach the network.
+TEST_RUNNER = "config.test_runner.NoNetworkTestRunner"

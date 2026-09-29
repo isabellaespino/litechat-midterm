@@ -24,7 +24,7 @@ def record_transaction(txn):
     return txn
 
 
-def post_transaction(user, amount_micros, kind, note="", created_by=None):
+def post_transaction(user, amount_micros, kind, note="", created_by=None, message=None):
     return record_transaction(
         CreditTransaction(
             user=user,
@@ -32,5 +32,12 @@ def post_transaction(user, amount_micros, kind, note="", created_by=None):
             kind=kind,
             note=note,
             created_by=created_by,
+            message=message,
         )
     )
+
+
+def reply_cost_micros(input_tokens, output_tokens, input_price, output_price):
+    """Cost of a reply in micro-dollars, rounded up. Prices are µ$ per 1M tokens."""
+    numerator = input_tokens * input_price + output_tokens * output_price
+    return -(-numerator // 1_000_000)  # integer ceil

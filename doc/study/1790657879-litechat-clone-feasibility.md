@@ -237,7 +237,7 @@ per token) and log a warning rather than give the reply away for free.
   documented above. That's one dependency, full control over URLs and headers, and it's
   easy to mock in tests. Views never see which provider is in use.
 
-Set a timeout on every call (e.g. 60 s). Map proxy 429, 502, 503 and 504 to a
+Set a timeout on every call (120 s; see §10 #12). Map proxy 429, 502, 503 and 504 to a
 friendly error message and a 502 or 503 response from our own view (§6.8).
 
 ### 6.6 Model choice per chat vs. per message
@@ -351,6 +351,7 @@ money library (integers of micro-dollars are enough).
 | 9 | Seeded prices (input / output per 1M tokens) | Claude Haiku $1.00 / $5.00; GPT-5.6 Luna $0.50 / $2.00; Gemini Flash $0.30 / $2.50 (§5). |
 | 10 | Output cap | Replies are capped at **1,024 output tokens** (§6.3). |
 | 11 | Sign-up credit | Every new user automatically receives **$2.00**, recorded as a `signup` ledger entry (§5). |
+| 12 | Proxy timeout | `LLM_TIMEOUT_SECONDS = 120` (raised from 60 during loop 2). The proxy's response time varies widely: in loop 2's real end-to-end check, one call timed out at 60 s and a retry took close to 60 s. A slow reply is better than a failed one, and a timeout still charges nothing (§6.3, §6.5). |
 
 No open questions remain for loop 1.
 

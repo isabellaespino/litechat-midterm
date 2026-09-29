@@ -11,6 +11,11 @@
       <div class="card">
         <strong>{{ model.display_name }}</strong>
         <span class="badge">{{ model.get_tier_display }}</span>
+        {% if model.provider in chat_providers %}
+          <a href="{% url 'chat_new' %}">Start a chat</a>
+        {% else %}
+          <span class="badge soon">Coming soon</span>
+        {% endif %}
         {% if model.description %}<p class="muted">{{ model.description }}</p>{% endif %}
         <div>{{ model.input_price_micros_per_mtok|dollars_precise }} input / {{ model.output_price_micros_per_mtok|dollars_precise }} output per 1M tokens</div>
       </div>

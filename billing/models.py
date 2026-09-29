@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.db import models
 
+from config.money import format_dollars_precise
+
 
 class Wallet(models.Model):
     """A user's prepaid balance. Only billing.services changes balance_micros."""
@@ -33,6 +35,14 @@ class CreditTransaction(models.Model):
     amount_micros = models.BigIntegerField()
     kind = models.CharField(max_length=20, choices=Kind.choices)
     note = models.CharField(max_length=255, blank=True)
+    # The reply a `charge` paid for.
+    message = models.OneToOneField(
+        "chat.Message",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="charge",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -47,4 +57,4 @@ class CreditTransaction(models.Model):
         verbose_name = "credit transaction"
 
     def __str__(self):
-        return f"{self.get_kind_display()} {self.amount_micros} µ$ for {self.user}"
+        return f"{self.get_kind_display()} {format_dollars_precise(self.amount_micros)} for {self.user}"

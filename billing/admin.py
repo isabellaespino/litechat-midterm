@@ -49,11 +49,11 @@ class CreditTransactionAdmin(admin.ModelAdmin):
     """Append-only: admins can add top-ups and adjustments but never edit or delete."""
 
     form = CreditTransactionForm
-    list_display = ["created_at", "user", "kind", "amount", "note", "created_by"]
+    list_display = ["created_at", "user", "kind", "amount", "note", "created_by", "conversation"]
     list_filter = ["kind", "created_at"]
     search_fields = ["user__username", "note"]
     autocomplete_fields = ["user"]
-    readonly_fields = ["user", "kind", "amount", "note", "created_by", "created_at"]
+    readonly_fields = ["user", "kind", "amount", "note", "conversation", "created_by", "created_at"]
 
     def get_readonly_fields(self, request, obj=None):
         return self.readonly_fields if obj else []
@@ -70,6 +70,17 @@ class CreditTransactionAdmin(admin.ModelAdmin):
     @admin.display(description="Amount", ordering="amount_micros")
     def amount(self, obj):
         return format_dollars_precise(obj.amount_micros)
+
+    @admin.display(description="Chat")
+    def conversation(self, obj):
+        if obj.message_id is None:
+            return ""
+        conversation = obj.message.conversation
+        url = reverse("admin:chat_conversation_change", args=[conversation.pk])
+        return format_html('<a href="{}">{}</a>', url, conversation.title)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("user", "created_by", "message__conversation")
 
     def save_model(self, request, obj, form, change):
         obj.amount_micros = dollars_to_micros(form.cleaned_data["amount"])
