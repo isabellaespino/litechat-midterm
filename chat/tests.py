@@ -1807,3 +1807,144 @@ class IncludeMemoriesSettingTests(TestCase):
         body = post.call_args.kwargs["json"]
         self.assertEqual([m["role"] for m in body["messages"]], ["user"])  # no system message
         self.assertNotIn("student", str(body))
+
+
+# --- Include memories switch: the form control (loop 8) -----------------------------
+
+@override_settings(OPENAI_API_KEY="test-key")
+@mock.patch("llm.http.requests.post")
+class SwitchTests(TestCase):
+    SWITCH = '<input type="checkbox" name="include_memories" value="1" id="id_include_memories" role="switch"'
+    MARKER = '<input type="hidden" name="memories_switch" value="1">'
+
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password=PASSWORD)
+        self.gpt = make_gpt()
+        self.client.force_login(self.user)
+
+    def add_memory(self, text="I'm a student"):
+        from accounts.models import Memory
+
+        return Memory.objects.create(user=self.user, text=text)
+
+    def set_prompt(self, text):
+        from accounts.services import get_settings
+
+        row = get_settings(self.user)
+        row.system_prompt = text
+        row.save()
+
+    def composer(self, response):
+        html = response.content.decode() if hasattr(response, "content") else response
+        return html.split('<form method="post" class="composer"')[1].split("</form>")[0]
+
+    def switch_state(self, html):
+        tag = re.search(r'<input type="checkbox" name="include_memories"[^>]*>', html).group(0)
+        return " checked" in tag
+
+    def system_of(self, post):
+        messages = post.call_args.kwargs["json"]["messages"]
+        return messages[0]["content"] if messages[0]["role"] == "system" else None
+
+    def test_hidden_without_memories_shown_with_one(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        for url in (reverse("chat_new"), reverse("chat_detail", args=[conversation.pk])):
+            with self.subTest(url=url, memories=0):
+                composer = self.composer(self.client.get(url))
+                self.assertNotIn("include_memories", composer)
+                self.assertNotIn("memories_switch", composer)
+        self.add_memory()
+        for url in (reverse("chat_new"), reverse("chat_detail", args=[conversation.pk])):
+            with self.subTest(url=url, memories=1):
+                composer = self.composer(self.client.get(url))
+                self.assertIn(self.SWITCH, composer)
+                self.assertIn(self.MARKER, composer)
+                self.assertIn('<label class="memory-switch" for="id_include_memories"', composer)
+                self.assertIn("Include memories", composer)
+
+    def test_new_chat_starts_on(self, post):
+        self.add_memory()
+        self.assertTrue(self.switch_state(self.composer(self.client.get(reverse("chat_new")))))
+
+    def test_off_in_a_new_chat_form_mode(self, post):
+        self.add_memory()
+        self.set_prompt("Always reply in French.")
+        post.return_value = proxy_ok()
+        response = self.client.post(
+            reverse("chat_new"), {"llm_model": self.gpt.pk, "content": "Hi", "memories_switch": "1"}
+        )
+        self.assertEqual(response.status_code, 302)
+        conversation = Conversation.objects.get()
+        self.assertFalse(conversation.include_memories)
+        self.assertEqual(self.system_of(post), "Always reply in French.")  # prompt still sent
+        page = self.client.get(reverse("chat_detail", args=[conversation.pk]))
+        self.assertFalse(self.switch_state(self.composer(page)))
+
+    def test_change_in_an_existing_chat_both_modes(self, post):
+        self.add_memory()
+        post.return_value = proxy_ok()
+        for mode in ("form", "json"):
+            with self.subTest(mode=mode):
+                headers = {"HTTP_ACCEPT": "application/json"} if mode == "json" else {}
+                response = self.client.post(
+                    reverse("chat_new"),
+                    {"llm_model": self.gpt.pk, "content": f"{mode} chat", "memories_switch": "1", "include_memories": "1"},
+                    **headers,
+                )
+                self.assertEqual(response.status_code, 200 if mode == "json" else 302)
+                conversation = Conversation.objects.latest("id")
+                self.assertIn("I'm a student", self.system_of(post))
+                if mode == "json":
+                    self.assertTrue(self.switch_state(self.composer(response.json()["main_html"])))
+                url = reverse("chat_detail", args=[conversation.pk])
+
+                self.client.post(url, {"content": "off now", "memories_switch": "1"}, **headers)  # switched off
+                self.assertIsNone(self.system_of(post))  # that very send had no memories
+                conversation.refresh_from_db()
+                self.assertFalse(conversation.include_memories)
+                self.assertFalse(self.switch_state(self.composer(self.client.get(url))))
+
+                self.client.post(url, {"content": "on again", "memories_switch": "1", "include_memories": "1"}, **headers)
+                self.assertIn("I'm a student", self.system_of(post))
+                conversation.refresh_from_db()
+                self.assertTrue(conversation.include_memories)
+
+    def test_no_switch_on_page_leaves_setting_unchanged(self, post):
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt, include_memories=False)
+        post.return_value = proxy_ok()
+        self.client.post(reverse("chat_detail", args=[conversation.pk]), {"content": "Hi"})  # no marker
+        conversation.refresh_from_db()
+        self.assertFalse(conversation.include_memories)
+
+    def test_failures_save_nothing_and_keep_the_posted_state(self, post):
+        self.add_memory()
+        conversation = Conversation.objects.create(owner=self.user, llm_model=self.gpt)
+        url = reverse("chat_detail", args=[conversation.pk])
+        off = {"memories_switch": "1"}
+
+        response = self.client.post(url, {"content": "", **off})  # 400
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(self.switch_state(self.composer(response)))
+
+        Wallet.objects.filter(user=self.user).update(balance_micros=0)
+        response = self.client.post(url, {"content": "draft", **off})  # 402
+        self.assertEqual(response.status_code, 402)
+        self.assertFalse(self.switch_state(self.composer(response)))
+        post.assert_not_called()
+
+        Wallet.objects.filter(user=self.user).update(balance_micros=2_000_000)
+        post.return_value = proxy_status(500)
+        response = self.client.post(url, {"content": "draft", **off})  # 502
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(self.switch_state(self.composer(response)))
+        self.assertIn("draft", self.composer(response))
+        conversation.refresh_from_db()
+        self.assertTrue(conversation.include_memories)  # nothing saved on failure
+
+    def test_script_submits_the_switch(self, post):
+        self.add_memory()
+        page = self.client.get(reverse("chat_new")).content.decode()
+        script = page.split("<script data-chat-script>")[1].split("</script>")[0]
+        self.assertLess(script.index("new FormData(form)"), script.index("setBusy(form, true)"))
+        composer = self.composer(page)
+        self.assertLess(composer.index(self.MARKER), composer.index("<textarea"))  # next to the message box

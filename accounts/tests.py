@@ -277,6 +277,8 @@ class MemoryTests(TestCase):
         self.assertContains(page, "≈ $0.000026 with GPT-5.6 Luna")  # 51 x $0.50/1M = 25.5 -> 26
         self.assertContains(page, "≈ $0.000016 with Gemini Flash")  # 51 x $0.30/1M = 15.3 -> 16
         self.assertEqual(page.context["total_spent"], spent_before)
+        self.assertContains(page, "in chats with memories switched on")
+        self.assertContains(page, "Chats with the switch off send only your system prompt.")
 
     def test_admin_shows_memories_read_only(self):
         from .models import Memory
