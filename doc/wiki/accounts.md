@@ -21,29 +21,36 @@ Every page is reachable from the nav bar or from a link on another page:
 | Who | Nav links |
 |---|---|
 | Everyone | Litechat (brand, links home), Home, Models |
-| Logged in | **Chats** (→ `/chats/`), **New chat** (→ `/chats/new/`), Available credit: $X.XX (→ `/credit/`), "Hi, username", Log out |
+| Logged in | **Chats** (→ `/chats/`, which opens the latest chat), **My Profile · $X.XX** (→ `/profile/`; the balance updates after each reply), "Hi, username", Log out |
 | Logged out | Log in, Sign up |
 | Staff | Admin |
 
 Other links:
 - **Home page:** Start a chat (logged in) or Sign up (logged out), plus Browse models.
-- **Chats list:** links to each chat.
-- **Chat page:** links back to Chats.
+- **Chat sidebar:** **+ New chat** and every chat. On phones it's behind a "Chats"
+  toggle.
+- **My Profile:** links to each chat and to New chat.
 - **`/models/`:** Start a chat on chat-enabled models.
 - **Sign-up and log-in pages:** link to each other.
 
-Styling is inline CSS in `base.html`. There's no JavaScript.
+Styling is inline CSS in `base.html`. The only JavaScript is the chat pages' inline
+enhancement script, and every page works without it.
 
 ## HTTP status codes
 
 | Situation | Status |
 |---|---|
 | Successful GET | 200 |
-| Successful form POST (sign-up, log-in, log-out, new chat, send) | 302 redirect |
-| Invalid form in our views (sign-up, log-in, new chat, send) | **400**, re-rendered with errors |
+| Successful form POST (sign-up, log-in, log-out, new chat, send, rename) | 302 redirect |
+| Successful fetch/JSON send from the chat script | **200** JSON |
+| Invalid form in our views (sign-up, log-in, new chat, send, rename) | **400**, re-rendered with errors (or JSON) |
 | Sending with a balance of $0 or less | **402** |
-| Proxy failure while sending | **502**, or **503** for rate limits, timeouts and outages (see [chat](chat.md#status-codes-chat-views)) |
+| Proxy failure while sending | **502**, or **503** for rate limits, timeouts and outages (see [chat](chat.md#two-response-modes-form-posts-and-fetch-json)) |
 | Logged-in-only page, anonymous visitor | 302 to `/accounts/login/?next=…` |
+| Chat JSON request, logged out | **401** JSON (fetch would silently follow a redirect) |
+| `/chats/` | 302 to the latest chat, or New chat |
+| `/credit/` (moved) | **301** to `/profile/` |
+| GET on the rename endpoint | 405 |
 | Another user's chat, unknown chat, unknown URL | 404 |
 | Invalid **Django admin** form | 200. See [Product decisions → Departures from the plan](product-decisions.md#departures-from-the-plan). |
 | Changing or deleting a ledger entry in admin; adding, changing or deleting a conversation in admin | 403 |

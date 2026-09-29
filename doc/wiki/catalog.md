@@ -29,6 +29,10 @@ A model can be picked in chat only if it's active **and** its provider is in
 `chat.forms.chat_models()`. Enabling Anthropic or Google needs an adapter in `llm/` plus
 adding the provider to that setting.
 
+The chat picker (on New chat, in the message box) shows **name and tier only**, e.g.
+"GPT-5.6 Luna · Value". Prices appear on `/models/` and My Profile, never on the chat
+pages.
+
 ## Admin
 
 Prices are entered as **dollars per 1M tokens** (`LLMModelForm`). They're converted to

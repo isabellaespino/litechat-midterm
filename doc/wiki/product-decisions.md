@@ -99,6 +99,30 @@ is better than a failed one. A timeout still charges nothing, so the only cost o
 longer wait is the user's time. The call runs outside any database transaction, so a
 slow reply doesn't block other users.
 
+### 6. A chatbot-style UI, with costs on My Profile
+
+**Decision** (loop 3, redesign study §10):
+- The chat pages use a sidebar, bubbles, a pinned composer, Enter to send, and sending
+  without a reload.
+- They show no costs or token counts. **My Profile** shows the credit and what each chat
+  and reply cost.
+- The nav shows **"My Profile · $X.XX"**, and it updates after every reply.
+- A chat's model is shown as a **fixed label**.
+- Chats can be **renamed**.
+- `/chats/` opens the latest chat.
+- The script is **inline**, and replies stay **whole**.
+
+**Why.**
+- Users expect a chat app to look like one, and a running meter next to every message
+  makes a pay-as-you-go product feel expensive.
+- Keeping the balance in the nav means users still always know where they stand, which
+  matters because sending is blocked at $0. So the nav must update live, from each
+  reply's JSON `balance`.
+- The fixed model label keeps each chat's history in one model's format. Per-message
+  switching stays deferred until more than one model can chat.
+- An inline script avoids static-file serving issues when `DEBUG` is off.
+- Whole replies keep the status codes and billing exact.
+
 ## Rejected alternatives
 
 | Alternative | Why we rejected it |
@@ -110,7 +134,9 @@ slow reply doesn't block other users.
 | Floats or cents for money | Floats drift. Cents can't represent one reply's cost. |
 | Capping each reply to what the balance can afford | Users near $0 would get surprise truncated answers. We chose to charge the actual cost and allow a bounded, slightly negative balance instead. |
 | Saving the user's message when the proxy fails | It would leave an unanswered message in the history, which would then be resent on every later turn. We save nothing and keep the draft in the form instead. |
-| Streaming replies | Needs browser JavaScript and makes billing on disconnect ambiguous. Whole replies keep the pages template-only and charging exact. |
+| Streaming replies | Once a streamed response starts it has already sent 200, so a proxy failure partway through can't become a 502/503. Usage arrives only at the end, so a broken stream leaves tokens used with nothing to charge. Whole replies plus a thinking indicator keep charging exact and every status code correct (redesign study §5). |
+| A frontend framework (React/Vue) or htmx for the chat UI | A framework is forbidden by `CLAUDE.md` and would pull rendering, and the temptation to call LLMs, into the browser. htmx is a new dependency that saves only a few dozen lines. A small inline script plus server-rendered fragments gives the same result with no dependency. |
+| Showing costs on the chat pages | Chat pages should feel like a chatbot, not a meter. Costs moved to My Profile, and the nav keeps the balance visible (redesign §10 #1). |
 
 ## Departures from the plan
 
@@ -172,3 +198,34 @@ commits, plus one follow-up fix. The code differs from it in these places:
    end-to-end check signed up, started a chat, sent two real messages and checked the
    ledger, all on a temporary test database following nav links. `db.sqlite3` only
    received the two new migrations.
+
+### Loop 3
+
+The loop 3 plan (`doc/plan/1790663510-loop3-chat-redesign.md`) was followed in six
+commits, plus one fix found in the browser check. Before execution, the user changed the
+plan: the nav balance must update live from each JSON reply (it was an accepted risk in
+the first draft), and the `uitest` account was authorized. The code differs from the plan
+in these places:
+
+1. **Layout width fix** (`fix: make the chat layout fill the window width`). On desktop,
+   the chat app shrank to its content (686–782px of 1280). The body is a flex column, and
+   the base `main { margin: 0 auto }` made `<main>` fit its content. The fix sets
+   `width: 100%; margin: 0` on `main.chat-app`. **Every automated assertion passed
+   anyway.** The bug was found by looking at a screenshot, and the browser check now
+   asserts the width.
+2. **`send_message` records the exchange it created**
+   (`conversation.new_messages = [user_message, assistant]`). The JSON response renders
+   exactly those two bubbles, even if another tab sends at the same moment. It only
+   adds information: the signature and behavior are unchanged.
+3. **Chats whose model is unavailable** keep loop 2's behavior: a "Start a new chat" link
+   replaces the composer. The plan didn't mention it.
+4. **The browser check used headless Chrome over the DevTools protocol**, driven by a
+   Node script in the scratchpad, because the Chrome extension tools weren't available.
+   Nothing was added to the repo. It ran on the dev server with the authorized `uitest`
+   account, so the dev database now has `uitest`, a few test chats and about $0.001 of
+   real charges.
+5. **The real-proxy checks needed retries.** The proxy dropped or stalled connections
+   (1.5 s to 85 s). Each time, the app returned 503, restored the draft and charged
+   nothing, so these failures also tested the error path for real. The final browser run
+   passed 30/30.
+

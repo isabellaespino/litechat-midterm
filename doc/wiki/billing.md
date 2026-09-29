@@ -2,7 +2,8 @@
 
 Users hold a **prepaid US dollar balance** called "Available credit". It counts down as
 replies are charged and goes up when an admin tops it up. The reasons for this design
-are in [Product decisions](product-decisions.md).
+are in [Product decisions](product-decisions.md). Users see the balance in the nav
+("My Profile · $X.XX") and all of their usage on [My Profile](#my-profile).
 
 ## Money representation
 
@@ -28,6 +29,8 @@ Templates use the same functions as filters: `{% load money %}`, then
   spend.
 - Ledger rows, reply costs and prices use `dollars_precise`.
 - Raw µ$ values never appear in the UI or the admin.
+- Reply costs and token counts appear only on My Profile and in admin, **never on the
+  chat pages**.
 
 ## Models (`billing/models.py`)
 
@@ -118,11 +121,32 @@ It fires for every way a user can be created: the sign-up form, Django admin,
   delete.
 - **Users:** the standard user admin plus a read-only "Available credit" inline.
 
-## User-facing pages
+## My Profile
 
-- **Nav bar** (logged in): "Available credit: $X.XX", which links to `/credit/`.
-- **`/credit/`**: the balance, and the user's own ledger (date, type, note, amount).
-  Each reply appears as a "Charge" row noted "Reply in “chat title”". Anonymous
-  visitors are redirected to log-in.
-- **Chat pages** show each reply's cost and the chat's total cost, and an out-of-credit
-  notice at $0 or less.
+**Nav bar** (logged in): **"My Profile · $X.XX"**, linking to `/profile/`. The amount is
+in `<span data-nav-balance>`, and on the chat pages the script updates it from each
+reply's JSON `balance`, so it's current after every reply without a reload.
+
+**`/profile/`** (`billing.views.profile`, login required; anonymous visitors → 302 to
+log-in) shows:
+- **Account:** username and member since.
+- **Available credit:** shown large (`dollars`), with "Contact an administrator to add
+  credit."
+- **Totals:** credit added (the non-`charge` ledger sum), spent on replies (the `charge`
+  sum, as a positive number), and the balance. Added − spent = balance = the ledger sum.
+- **Usage by chat:**
+  - Chats are annotated with the reply count (assistant messages), summed input and
+    output tokens, total cost and last used. They're ordered explicitly
+    (`.order_by("-updated_at", "-id")`) and paginated 20 per page
+    (`Paginator.get_page`, so `?page=abc` still gives 200).
+  - Each chat is a `<details>` that expands to its replies: date/time, tokens in and
+    out, cost, and "(estimated)" or "(cut short)" where they apply.
+  - Replies come from **one query** for the whole page, grouped in Python. The number
+    of queries doesn't grow with the number of chats, and a test checks this.
+- **Credit added:** sign-up credit, top-ups and adjustments, with date, type, note and
+  amount.
+
+**`/credit/`** (the loop 1–2 credit page) now returns a **301** to `/profile/`.
+
+**Chat pages** show no costs. At $0 or less they show an out-of-credit notice linking to
+My Profile, and disable the composer.

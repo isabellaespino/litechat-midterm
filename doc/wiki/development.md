@@ -31,16 +31,16 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 
 ## Tests
 
-`python manage.py test` runs 70 tests (at loop 2):
+`python manage.py test` runs 100 tests (at loop 3):
 
 | File | Tests | Covers |
 |---|---|---|
 | `config/tests.py` | 5 | the home page; the money helpers (rounding, negatives, conversion) |
 | `accounts/tests.py` | 10 | sign-up, log-in and log-out status codes and behavior, including the 400s |
 | `catalog/tests.py` | 7 | `/models/` grouping and inactive hiding; dollar↔µ$ in the admin form; the seed command's idempotence |
-| `billing/tests.py` | 17 | sign-up credit for every creation path; the ledger invariant; `str()` in dollars; admin top-ups, adjustments and dollar display; append-only 403s; read-only wallets; the `/credit/` page |
+| `billing/tests.py` | 22 | sign-up credit for every creation path; the ledger invariant; `str()` in dollars; admin top-ups, adjustments and dollar display; append-only 403s; read-only wallets; **My Profile** (usage by chat and reply, totals, pagination, bounded queries, the `/credit/` 301, the nav "My Profile · $X.XX") |
 | `llm/tests.py` | 10 | the OpenAI request shape (URL, Bearer key, `max_tokens` 1024, `reasoning_effort`, timeout 120); response parsing; estimated usage; error-status mapping; missing key; provider dispatch; the no-network guard |
-| `chat/tests.py` | 21 | cost rounding; titles; `send_message` (charges, failure saves nothing, history order, negative balance); every chat view status (302/400/402/404/502/503); history resent; list ordering and ownership; cut-off and escaping; the Coming soon badge; admin dollar display |
+| `chat/tests.py` | 46 | cost rounding; titles; `send_message`; every chat status in **form mode and JSON mode** (200/302/400/401/402/404/502/503); JSON `balance` after the charge; history resent; the `/chats/` redirect; sidebar order, ownership and `aria-current`; bubble order; **no costs on chat pages**; picker vs model chip; the out-of-credit composer being disabled; renaming (400/404/405, no reorder); escaping; script included once with the right hooks; no proxy URL or key names in templates; admin dollar display |
 
 ### The LLM proxy is never called from tests
 
@@ -59,9 +59,35 @@ These steps were verified on a fresh clone at the loop 1 and loop 2 rendezvous.
 
 Real calls happen only in a manual verification step, outside the test suite. It uses a
 script run against a **throwaway test database** (`create_test_db` / `destroy_test_db`)
-that follows nav links. Loop 2's check sent two real messages to GPT-5.6 Luna and
-confirmed the costs, the resent history and the ledger. It never writes to
-`db.sqlite3`.
+that follows nav links. Loop 2's check sent two real messages; loop 3's did the same
+through the JSON path and checked each response's `balance` against the wallet. It never
+writes to `db.sqlite3`. The proxy is unreliable (see [chat](chat.md)), so expect to
+retry once.
+
+### Browser checks (the chat script)
+
+Django's test client can't run JavaScript, so the script's behavior is checked in a real
+browser at the verify step.
+- Loop 3 drove **headless Chrome** through the DevTools protocol, from a Node script
+  kept in the scratchpad, with no repo dependency. It ran against the dev server using
+  the **`uitest`** account in the dev database, which the user authorized. Its password
+  isn't recorded here: reset it with `python manage.py changepassword uitest` if you
+  need it.
+- 30 checks, including:
+  - Enter vs Shift+Enter
+  - the thinking bubble
+  - no reload
+  - `pushState` and the sidebar update
+  - the nav balance being rewritten by the script
+  - the draft restored after a real proxy error
+  - renaming
+  - phone width (375px)
+  - sending with JavaScript disabled
+- **Look at the screenshots, too.** Loop 3's layout-width bug passed every assertion
+  and was only visible in a screenshot.
+- **Gotcha:** `runserver --noreload` keeps Django's **cached template loader**, which
+  never picks up template edits. Restart the server after changing templates, or run
+  without `--noreload`.
 
 ## Workflow and commits
 
