@@ -144,6 +144,43 @@
       .composer-row { flex-wrap: wrap; }
       .composer-row select { max-width: 100%; width: 100%; }
     }
+
+    /* Landing page only (body.landing): the hero theme stays here. */
+    main.landing-main { max-width: none; padding: 0 0 48px; }
+    body.landing .hero { background: var(--navy-900); color: var(--on-navy); padding: 56px 16px 64px; }
+    body.landing .hero-inner { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 40px; }
+    body.landing .hero h1 { color: var(--on-navy); font-size: clamp(2rem, 5vw, 3rem); line-height: 1.1; margin: 0 0 12px; }
+    body.landing .hero .eyebrow { color: var(--gold); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .8rem; margin: 0 0 8px; }
+    body.landing .hero .lead { color: var(--muted-on-navy); font-size: 1.15rem; max-width: 36em; margin: 0 0 24px; }
+    body.landing .hero .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 0; }
+    body.landing .hero .cta { font-size: 1.05rem; padding: 12px 28px; }
+    body.landing .hero .link { color: var(--on-navy); text-decoration: underline; text-underline-offset: 3px; }
+    body.landing .emblem { flex: none; width: 140px; height: auto; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, .35)); }
+    body.landing .emblem .shield-body { fill: var(--navy-700); stroke: var(--gold); stroke-width: 6; stroke-linejoin: round; }
+    body.landing .emblem .shield-shine { fill: #ffffff; opacity: .06; }
+    body.landing .emblem .bubble-shape { fill: #ffffff; }
+    body.landing .emblem .bubble-dot { fill: var(--navy-900); }
+    body.landing .section { max-width: 960px; margin: 0 auto; padding: 40px 16px 0; }
+    body.landing .steps { list-style: none; padding: 0; margin: 16px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    body.landing .step { background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--gold); border-radius: 10px; padding: 20px; }
+    body.landing .step h3 { font-size: 1.05rem; margin: 12px 0 6px; }
+    body.landing .step p { margin: 0; color: var(--muted); }
+    body.landing .step-number { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--navy-900); color: var(--on-navy); font-weight: 800; }
+    body.landing .snapshot { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-top: 16px; }
+    body.landing .snapshot th { font-size: .85rem; }
+    body.landing .small { font-size: .9rem; }
+    @media (max-width: 720px) {
+      body.landing .hero { padding: 40px 16px 48px; }
+      body.landing .hero-inner { flex-direction: column; text-align: center; gap: 20px; }
+      body.landing .hero .actions { justify-content: center; }
+      body.landing .emblem { width: 104px; }
+      body.landing .steps { grid-template-columns: 1fr; }
+      body.landing .snapshot thead { display: none; }
+      body.landing .snapshot, body.landing .snapshot tbody, body.landing .snapshot tr, body.landing .snapshot td { display: block; width: 100%; }
+      body.landing .snapshot tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+      body.landing .snapshot td { border: 0; display: flex; justify-content: space-between; gap: 12px; text-align: right; padding: 4px 12px; }
+      body.landing .snapshot td::before { content: attr(data-label); color: var(--muted); text-align: left; font-weight: 600; }
+    }
   </style>
 </head>
 <body class="{% block body_class %}{% endblock %}">
