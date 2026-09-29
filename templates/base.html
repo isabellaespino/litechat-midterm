@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Litechat{% endblock %} · Litechat</title>
+  <title>{% block title %}Chat4All{% endblock %} · Chat4All</title>
   <style>
     :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --accent: #0a66c2; --bg: #fafafa; --card: #fff; --error: #b3261e; }
     * { box-sizing: border-box; }
@@ -130,7 +130,7 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <nav>
-    <a class="brand" href="{% url 'home' %}">Litechat</a>
+    <a class="brand" href="{% url 'home' %}">Chat4All</a>
     <a href="{% url 'home' %}">Home</a>
     <a href="{% url 'model_list' %}">Models</a>
     {% if user.is_authenticated %}
